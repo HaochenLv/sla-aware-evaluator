@@ -28,6 +28,7 @@ class ModelSpec:
     num_kv_heads: int
     kv_element_bytes: int
     flops_per_token_per_layer: float
+    activation_element_bytes: int | None = None
 
     @property
     def weight_bytes(self) -> float:
@@ -35,7 +36,12 @@ class ModelSpec:
 
     @property
     def activation_bytes_per_token(self) -> int:
-        return self.hidden_size * self.kv_element_bytes
+        element_bytes = (
+            self.activation_element_bytes
+            if self.activation_element_bytes is not None
+            else self.kv_element_bytes
+        )
+        return self.hidden_size * element_bytes
 
     @property
     def kv_bytes_per_token_per_layer(self) -> float:
@@ -108,14 +114,16 @@ class Pipeline:
             raise ValueError("stages do not cover all model layers")
 
         stage_by_id = {stage.id: stage for stage in self.stages}
-        expected_pairs = {
+        expected_pairs = tuple(
             (ordered[i].id, ordered[i + 1].id) for i in range(len(ordered) - 1)
-        }
-        actual_pairs = {
+        )
+        actual_pairs = tuple(
             (boundary.upstream_stage_id, boundary.downstream_stage_id)
             for boundary in self.boundaries
-        }
-        if actual_pairs != expected_pairs:
+        )
+        if len(actual_pairs) != len(set(actual_pairs)):
+            raise ValueError("duplicate stage boundary")
+        if set(actual_pairs) != set(expected_pairs) or len(actual_pairs) != len(expected_pairs):
             raise ValueError("boundaries must match every adjacent stage pair exactly")
         for boundary in self.boundaries:
             upstream = stage_by_id[boundary.upstream_stage_id]
@@ -167,6 +175,10 @@ class EvaluatorConfig:
     mixed_contention: float = 0.12
     decode_context_scale: float = 4096.0
     decode_context_penalty: float = 0.50
+    # If true, requests with cross-node traffic retain their resource commitment
+    # for the full SLA service window. This closes the previous inconsistency in
+    # which network was checked as a reservation but contributed zero lifetime.
+    conservative_network_lifetime: bool = True
     time_epsilon: float = 1e-9
     progress_epsilon: float = 1e-9
     max_events: int = 1_000_000
@@ -182,10 +194,13 @@ class RequestRuntime:
     prefill_finish_s: float = 0.0
     decode_time_per_token_s: float = 0.0
 
-    def resource_context(self, block_size: int) -> int:
+    def block_index(self, block_size: int, epsilon: float = 0.0) -> int:
+        return int((self.decode_progress + epsilon) // block_size)
+
+    def resource_context(self, block_size: int, epsilon: float = 0.0) -> int:
         if self.phase == Phase.PREFILL:
             return self.spec.input_tokens
-        completed_block = int(self.decode_progress // block_size)
+        completed_block = self.block_index(block_size, epsilon)
         upper_output = min((completed_block + 1) * block_size, self.spec.output_tokens)
         return self.spec.input_tokens + upper_output
 
@@ -207,9 +222,12 @@ class StateSnapshot:
     time_s: float
     num_prefill: int
     num_decode: int
+    event_types: tuple[str, ...] = ()
     link_required_bytes_per_s: Mapping[str, float] = field(default_factory=dict)
     node_memory_bytes: Mapping[str, float] = field(default_factory=dict)
     request_progress: Mapping[str, float] = field(default_factory=dict)
+    request_phase: Mapping[str, str] = field(default_factory=dict)
+    request_context: Mapping[str, int] = field(default_factory=dict)
 
 
 def sorted_workload(workload: Sequence[RequestSpec]) -> tuple[RequestSpec, ...]:
