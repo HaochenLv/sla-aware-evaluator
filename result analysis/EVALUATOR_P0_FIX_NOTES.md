@@ -1,26 +1,41 @@
-# Evaluator P0 Semantic Fix Notes
+# Evaluator Semantic Fix Notes
 
 Branch: `fix/evaluator-p0-semantics`
 
-This branch applies the first correctness pass after the HELIX MVP review. It intentionally does **not** add the planned reference serving evaluator or deployment search.
+This branch contains the first correctness pass after the HELIX MVP review plus the follow-up semantic ablation decision. It still does **not** add the planned reference serving evaluator or deployment search.
 
-## 1. Network commitment now affects active lifetime
+## 1. Default progress semantics: profiling-driven compute-only
 
-Previous behavior:
+The follow-up ablation showed that making every cross-node Prefill/Decode request remain active for the full TTFT/TPOT window changes the state trajectory substantially and is too strong to use as the default evaluator semantics.
 
-- Prefill transitioned to Decode after compute time only.
-- Decode equivalent-token progress advanced with compute time only.
-- Network was checked as a conservative bandwidth commitment, but the request could release that commitment before the corresponding network service window had elapsed.
+Current default (`EvaluatorConfig.conservative_network_lifetime=False`):
 
-New default behavior (`EvaluatorConfig.conservative_network_lifetime=True`):
+- Prefill transitions according to profiled Prefill service time plus the configured fixed/queue overhead convention already used by the event engine.
+- Decode equivalent-token progress is driven by the profiled Decode per-token service time.
+- Network remains a conservative SLA-derived reservation/red-line check.
+- Network reservation does **not** directly slow the state machine.
 
-- If a Prefill/Decode phase has cross-node traffic and its SLA network budget is positive, the request retains its resource commitment for the full corresponding SLA service window.
-- This is deliberately conservative reservation semantics, not a high-fidelity link scheduler.
-- `conservative_network_lifetime=False` preserves the previous compute-only progress semantics for ablation/regression tests.
+This preserves the original v2.1 modeling intent: profiling drives state evolution while SLA maps the current state to a conservative network requirement.
 
-Expected consequence: the old HELIX capacity values are **not expected to remain unchanged**. Re-run the experiment and treat the new output as a new version of the evaluator.
+## 2. Full-SLA-window lifetime is retained only as an ablation
 
-## 2. Capacity search no longer silently relies on pure binary search
+Setting:
+
+```python
+EvaluatorConfig(conservative_network_lifetime=True)
+```
+
+enables the stronger policy in which a cross-node phase/token remains active for the full corresponding SLA service window.
+
+This policy is retained for research comparison only. It should be described as:
+
+`full-SLA-window lifetime ablation`
+
+and not as the default P0 correctness fix.
+
+Controlled HELIX ablation results showed that the large capacity shift on the first P0 branch was primarily attributable to this lifetime policy. The compute-only variant largely restored the original Fast/Slow capacity ratio while keeping the other engineering fixes.
+
+## 3. Capacity search no longer silently relies on pure binary search
 
 `find_capacity()` now:
 
@@ -35,36 +50,37 @@ The returned `CapacityResult` records:
 - `monotonicity_verified_on_samples`;
 - `verification_probe_intensities`.
 
-This is still sampled verification, not a mathematical proof of monotonicity.
+This is sampled verification, not a mathematical proof of monotonicity.
 
-## 3. Decode block boundary handling is unified
+## 4. Decode block boundary handling is unified
 
-`RequestRuntime.block_index()` and `resource_context()` now use the same epsilon policy. Decode progress is snapped to a block boundary when it is within `progress_epsilon`.
+`RequestRuntime.block_index()` and `resource_context()` use the same epsilon policy. Decode progress is snapped to a block boundary when it is within `progress_epsilon`.
 
 This removes the previous edge case where the scheduler could treat a boundary as crossed while resource accounting still used the previous block.
 
-## 4. Same-timestamp violations are retained
+## 5. Same-timestamp violations are retained
 
-Resource accounting now collects the complete violation set at the event timestamp instead of returning immediately after the first object encountered.
+Resource accounting collects the complete violation set at the event timestamp instead of returning immediately after the first object encountered.
 
 `EvaluationResult` keeps:
 
 - `first_violation` for compatibility;
 - `first_violations` for the complete same-timestamp set.
 
-This matters for the HELIX MVP because equal-capacity stage links can violate simultaneously; `slow-0` or `fast-0` should not automatically be interpreted as a unique physical bottleneck.
+This matters for the HELIX MVP because equal-capacity stage links can violate simultaneously; `slow-0` or `fast-0` should not be interpreted as a unique physical bottleneck.
 
-## 5. Diagnostics are richer
+## 6. Diagnostics are richer
 
-Trace snapshots now optionally record:
+Trace snapshots optionally record:
 
 - event types in the atomic event batch;
 - request phase;
 - request resource context;
 - Decode progress.
 
-`helix_demo.py` now outputs:
+`helix_demo.py` outputs:
 
+- an explicit `progress_policy` label;
 - safe and unsafe run summaries;
 - peak Prefill/Decode concurrency;
 - minimum link headroom;
@@ -73,27 +89,30 @@ Trace snapshots now optionally record:
 - monotonicity verification metadata;
 - safe/unsafe arrival-rate bracket.
 
-## 6. Small model/validation cleanup
+The default HELIX demo now uses `progress_policy = compute_only`.
 
-- `activation_element_bytes` is separated from KV element precision while preserving the old fallback behavior.
+## 7. Small model/validation cleanup
+
+- `activation_element_bytes` is separated from KV element precision while preserving fallback behavior.
 - duplicate stage boundaries are rejected.
 - workspace/margin are only added to nodes that actually host model layers.
 
-## 7. Added regression tests
+## 8. Regression tests
 
-New tests cover:
+Tests cover:
 
-- old continuous-progress behavior when conservative network lifetime is explicitly disabled;
-- network commitment extending active lifetime under the new default;
+- compute-only being the default progress policy;
+- continuous Decode progress under the default policy;
+- the full-SLA-window ablation extending request lifetime;
 - epsilon-consistent block context;
 - simultaneous network violations being retained;
 - sampled monotonicity verification metadata.
 
-## 8. Commands to run in Codex/local environment
+## 9. Commands for Codex/local validation
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
-PYTHONPATH=src python3 -m sla_aware_mvp.helix_demo | tee /tmp/helix_p0_result.json
+PYTHONPATH=src python3 -m sla_aware_mvp.helix_demo | tee /tmp/helix_compute_only_default.json
 ```
 
 Recommended comparison:
@@ -102,14 +121,15 @@ Recommended comparison:
 git diff main...fix/evaluator-p0-semantics
 ```
 
-For a direct semantic ablation, run the same HELIX setup once with:
+## 10. Current research interpretation
 
-```python
-EvaluatorConfig(decode_block_size=16, conservative_network_lifetime=False)
-```
+The conservative evaluator is still **not** validated as a predictor of real serving capacity or Pipeline ranking.
 
-and once with the new default `True`.
+Current status:
 
-## 9. What this branch does not claim
+- mechanism implementation: working MVP;
+- default progress abstraction: compute-only;
+- full-SLA-window lifetime: retained as an extreme-conservatism ablation;
+- next decisive step: compare Pipeline rankings against an independent reference serving evaluator.
 
-This branch does not establish that the evaluator is a correct predictor of real serving capacity. The next decisive step remains a multi-pipeline ranking comparison against an independent reference serving evaluator.
+Do not connect this evaluator to deployment search until that ranking validation is performed.
