@@ -175,10 +175,11 @@ class EvaluatorConfig:
     mixed_contention: float = 0.12
     decode_context_scale: float = 4096.0
     decode_context_penalty: float = 0.50
-    # If true, requests with cross-node traffic retain their resource commitment
-    # for the full SLA service window. This closes the previous inconsistency in
-    # which network was checked as a reservation but contributed zero lifetime.
-    conservative_network_lifetime: bool = True
+    # Default research semantics: profiling-driven progress. Network remains a
+    # conservative SLA-derived reservation/red-line check, but does not itself
+    # slow the state machine. Setting this flag to True enables the deliberately
+    # stronger full-SLA-window lifetime ablation; it is not the default model.
+    conservative_network_lifetime: bool = False
     time_epsilon: float = 1e-9
     progress_epsilon: float = 1e-9
     max_events: int = 1_000_000
