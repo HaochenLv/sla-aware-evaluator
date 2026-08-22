@@ -131,7 +131,6 @@ class ReferenceEvaluatorTests(unittest.TestCase):
 
     def test_reference_memory_red_line(self):
         pipeline = build_one_stage_pipeline(memory_capacity=1024)
-        # Static weights alone exceed memory: this should be caught at Arrival.
         result = evaluate_reference(
             pipeline=pipeline,
             workload=(RequestSpec("r", 0.0, 1, 1),),
@@ -159,10 +158,38 @@ class ReferenceEvaluatorTests(unittest.TestCase):
             tolerance=0.05,
             verification_grid_points=5,
         )
+        self.assertFalse(result.right_censored)
+        self.assertIsNotNone(result.unsafe_intensity)
         self.assertLess(result.safe_intensity, result.unsafe_intensity)
         self.assertTrue(result.representative_safe_run.feasible)
+        self.assertIsNotNone(result.representative_unsafe_run)
         self.assertFalse(result.representative_unsafe_run.feasible)
         self.assertTrue(result.monotonicity_verified_on_samples)
+
+    def test_reference_capacity_reports_right_censoring_at_search_limit(self):
+        pipeline = build_one_stage_pipeline()
+        profiler = FixedStageProfiler(prefill_s=0.01, decode_s=0.01)
+        workload = (
+            RequestSpec("a", 0.0, 1, 1),
+            RequestSpec("b", 10.0, 1, 1),
+        )
+        result = find_reference_capacity(
+            pipeline=pipeline,
+            workload=workload,
+            sla=SLA(ttft_s=10.0, tpot_s=10.0),
+            profiler=profiler,
+            initial_intensity=0.25,
+            max_intensity=0.5,
+            verification_grid_points=5,
+        )
+        self.assertTrue(result.right_censored)
+        self.assertEqual(result.safe_intensity, 0.5)
+        self.assertIsNone(result.unsafe_intensity)
+        self.assertIsNone(result.representative_unsafe_run)
+        self.assertTrue(result.representative_safe_run.feasible)
+        self.assertEqual(result.search_max_intensity, 0.5)
+        self.assertTrue(result.monotonicity_verified_on_samples)
+        self.assertIn(0.5, result.verification_probe_intensities)
 
 
 if __name__ == "__main__":
