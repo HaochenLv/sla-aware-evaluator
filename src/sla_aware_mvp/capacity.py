@@ -18,12 +18,14 @@ class CapacityTrial:
 @dataclass(frozen=True)
 class CapacityResult:
     safe_intensity: float
-    unsafe_intensity: float
+    unsafe_intensity: float | None
     trials: tuple[CapacityTrial, ...]
     representative_safe_run: EvaluationResult | None
-    representative_unsafe_run: EvaluationResult
+    representative_unsafe_run: EvaluationResult | None
     monotonicity_verified_on_samples: bool
     verification_probe_intensities: tuple[float, ...]
+    right_censored: bool
+    search_max_intensity: float
 
 
 def scale_workload(
@@ -60,17 +62,21 @@ def find_capacity(
     """Find the first sampled safe-to-unsafe workload frontier.
 
     A pure binary search silently assumes monotonic feasibility. The event-driven
-    evaluator contains discrete block and concurrency changes, so this routine now:
+    evaluator contains discrete block and concurrency changes, so this routine:
 
-    1. brackets one safe and one unsafe point;
+    1. brackets one safe and one unsafe point when the frontier is observed;
     2. probes a coarse grid inside that bracket;
     3. probes several intensities above the first unsafe point for safe re-entry;
     4. refines only after the sampled points are monotonic.
 
-    This is sampled verification, not a mathematical proof of monotonicity. If a
-    sampled safe point occurs after an unsafe point, the routine stops and asks the
-    caller to use/report a grid rather than returning a misleading binary-search
-    capacity.
+    A finite workload can remain feasible all the way to ``max_intensity``. That
+    is a valid right-censored observation rather than a search failure. In that
+    case the returned lower bound is the evaluated ``max_intensity``, the unsafe
+    bound/run are ``None``, and ``right_censored`` is true.
+
+    Sampled monotonicity is not a mathematical proof. If a sampled safe point
+    occurs after an unsafe point, this routine stops rather than returning a
+    misleading scalar capacity.
     """
     if initial_intensity <= 0:
         raise ValueError("initial_intensity must be positive")
@@ -127,10 +133,23 @@ def find_capacity(
             low = candidate
             safe_run = candidate_run
             high = candidate
-        else:
-            raise RuntimeError("no unsafe intensity found below max_intensity")
         if high_run.feasible:
-            raise RuntimeError("no unsafe intensity found below max_intensity")
+            # We explicitly evaluated max_intensity and it is still safe. Report
+            # C >= max_intensity instead of fabricating an unsafe bound.
+            sampled = tuple(
+                trial.intensity for trial in sorted(trials, key=lambda item: item.intensity)
+            )
+            return CapacityResult(
+                safe_intensity=high,
+                unsafe_intensity=None,
+                trials=tuple(trials),
+                representative_safe_run=high_run,
+                representative_unsafe_run=None,
+                monotonicity_verified_on_samples=True,
+                verification_probe_intensities=sampled,
+                right_censored=True,
+                search_max_intensity=max_intensity,
+            )
     else:
         unsafe_anchor = high
         unsafe_anchor_run = high_run
@@ -206,4 +225,6 @@ def find_capacity(
         representative_unsafe_run=high_run,
         monotonicity_verified_on_samples=True,
         verification_probe_intensities=tuple(probe_intensities),
+        right_censored=False,
+        search_max_intensity=max_intensity,
     )
