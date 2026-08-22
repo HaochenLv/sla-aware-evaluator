@@ -23,11 +23,33 @@ class CapacityTests(unittest.TestCase):
             tolerance=0.03,
             verification_grid_points=7,
         )
+        self.assertFalse(result.right_censored)
         self.assertGreater(result.safe_intensity, 0)
+        self.assertIsNotNone(result.unsafe_intensity)
         self.assertGreater(result.unsafe_intensity, result.safe_intensity)
+        self.assertIsNotNone(result.representative_unsafe_run)
         self.assertFalse(result.representative_unsafe_run.feasible)
         self.assertTrue(result.monotonicity_verified_on_samples)
         self.assertGreater(len(result.verification_probe_intensities), 0)
+
+    def test_capacity_reports_right_censoring_at_search_limit(self):
+        pipeline, _ = build_pipelines()
+        result = find_capacity(
+            pipeline=pipeline,
+            workload=build_workload()[:2],
+            sla=SLA(ttft_s=100.0, tpot_s=100.0),
+            initial_intensity=0.25,
+            max_intensity=0.5,
+            verification_grid_points=5,
+        )
+        self.assertTrue(result.right_censored)
+        self.assertEqual(result.safe_intensity, 0.5)
+        self.assertIsNone(result.unsafe_intensity)
+        self.assertIsNone(result.representative_unsafe_run)
+        self.assertTrue(result.representative_safe_run.feasible)
+        self.assertEqual(result.search_max_intensity, 0.5)
+        self.assertTrue(result.monotonicity_verified_on_samples)
+        self.assertIn(0.5, result.verification_probe_intensities)
 
 
 if __name__ == "__main__":

@@ -79,9 +79,9 @@ def build_helix_pipelines() -> tuple[Pipeline, Pipeline]:
     )
 
 
-def _run_summary(run, pipeline: Pipeline) -> dict:
+def _run_summary(run, pipeline: Pipeline) -> dict | None:
     if run is None:
-        return {}
+        return None
     return {
         "feasible": run.feasible,
         "final_time_s": run.final_time_s,
@@ -114,6 +114,10 @@ def _run_summary(run, pipeline: Pipeline) -> dict:
     }
 
 
+def _rate(intensity: float | None, base_rate: float) -> float | None:
+    return intensity * base_rate if intensity is not None else None
+
+
 def main() -> None:
     root = artifact_root()
     profiler = HelixA100Llama2Profiler.from_artifact(root, commit=HELIX_COMMIT)
@@ -141,7 +145,7 @@ def main() -> None:
         "evaluator_semantics": {
             "progress_policy": progress_policy,
             "conservative_network_lifetime": config.conservative_network_lifetime,
-            "capacity_search": "sampled monotonicity verification + local refinement",
+            "capacity_search": "sampled monotonicity verification + local refinement + right censoring",
         },
         "profile": {
             "source": profiler.provenance.source,
@@ -168,19 +172,24 @@ def main() -> None:
             profiler=profiler,
             tolerance=0.01,
         )
-        violation = capacity.representative_unsafe_run.first_violation
+        unsafe_run = capacity.representative_unsafe_run
+        violation = unsafe_run.first_violation if unsafe_run is not None else None
         result["pipelines"][pipeline.id] = {
             "safe_intensity_lower_bound": capacity.safe_intensity,
             "unsafe_intensity_upper_bound": capacity.unsafe_intensity,
-            "safe_arrival_rate_lower_bound_rps": capacity.safe_intensity * base_rate,
-            "unsafe_arrival_rate_upper_bound_rps": capacity.unsafe_intensity * base_rate,
+            "safe_arrival_rate_lower_bound_rps": _rate(capacity.safe_intensity, base_rate),
+            "unsafe_arrival_rate_upper_bound_rps": _rate(
+                capacity.unsafe_intensity, base_rate
+            ),
+            "right_censored": capacity.right_censored,
+            "search_max_intensity": capacity.search_max_intensity,
             "first_unsafe_bottleneck": violation.kind.value if violation else None,
             "bottleneck_object": violation.object_id if violation else None,
             "capacity_trials": len(capacity.trials),
             "monotonicity_verified_on_samples": capacity.monotonicity_verified_on_samples,
             "verification_probe_intensities": capacity.verification_probe_intensities,
             "safe_run": _run_summary(capacity.representative_safe_run, pipeline),
-            "unsafe_run": _run_summary(capacity.representative_unsafe_run, pipeline),
+            "unsafe_run": _run_summary(unsafe_run, pipeline),
         }
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
