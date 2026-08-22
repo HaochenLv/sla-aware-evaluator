@@ -1,0 +1,36 @@
+project_raw_inputs:
+  model_catalog:
+    path: raw_data/model.md
+    role: model_structure_reference
+  gpu_catalog:
+    path: raw_data/gpu.md
+    role: unverified_hardware_reference
+  helix_guide:
+    path: raw_data/Helix_Profile_Datasets_For_Codex.md
+    role: external_data_acquisition_and_semantics_guide
+
+current_mvp:
+  profile_type: estimated_analytical
+  quality_label: E
+  external_downloads_used: false
+  notes:
+    - GPU values in the demo are synthetic sensitivity settings.
+    - The evaluator core is intentionally decoupled from profile provenance.
+
+helix_official_artifact:
+  repo: https://github.com/Thesys-lab/Helix-ASPLOS25
+  commit: 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+  local_path: data/raw/helix/Helix-ASPLOS25
+  license: Apache-2.0
+  fetched_subset:
+    - simulator/model_manager/llama2_70b/a100
+    - simulator/model_manager/google_machine_profiles.ini
+    - simulator/event_simulator/utils.py
+    - simulator/trace_generator/arrival_rate
+    - simulator/trace_generator/length_data
+  checksums:
+    prompt_bs2time.csv: 00867a592d8aadccb87deb68e8ea417bab2de4d44ebfac84ac110d535601c07c
+    decode_bs2time.csv: 1d8302ad8503ce5f734bf1a4b43e3dc0c642063acdc8f59ad6d58a67f3cb90e0
+    azure_conv_arrive_time.pkl: 1ae6dec376d39a7c9fa7ed8239cf5b10b5349b540697c94df8d1d1055b35f2a3
+    azure_conv_input.pkl: 090770d895fe96d733f4c1d2e0068b5d391f565f25d05841077063c0c344c92f
+    azure_conv_output.pkl: 4d42ec92d42a36cdf647af81fc5f7f8627ff4c21bddee24902f25d013dbadd82

@@ -1,0 +1,37 @@
+{
+  "helix_commit": "8639497a4aaf1eb3b7594614cb0bbd376c1342b3",
+  "experiment_quality": "mixed: M profile, generated Azure-derived workload, S topology/SLA",
+  "profile": {
+    "source": "HELIX official artifact",
+    "model": "LLaMA-2-70B",
+    "gpu": "A100-40GB",
+    "quality": "M",
+    "context_observed": false
+  },
+  "workload": {
+    "source": "HELIX Azure Conversation artifacts",
+    "kind": "generated_from_interval_counts_and_paired_length_distribution",
+    "requests": 133,
+    "base_arrival_rate_rps": 1.1488
+  },
+  "sla": {
+    "ttft_s": 2.0,
+    "tpot_s": 0.15
+  },
+  "pipelines": {
+    "helix-slow-link-placement": {
+      "safe_intensity_lower_bound": 0.4453,
+      "unsafe_intensity_upper_bound": 0.4531,
+      "safe_arrival_rate_lower_bound_rps": 0.5116,
+      "first_unsafe_bottleneck": "network",
+      "bottleneck_object": "slow-0"
+    },
+    "helix-fast-link-placement": {
+      "safe_intensity_lower_bound": 1.2734,
+      "unsafe_intensity_upper_bound": 1.2812,
+      "safe_arrival_rate_lower_bound_rps": 1.463,
+      "first_unsafe_bottleneck": "network",
+      "bottleneck_object": "fast-0"
+    }
+  }
+}
