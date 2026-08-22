@@ -22,10 +22,7 @@ HELIX_COMMIT = "8639497a4aaf1eb3b7594614cb0bbd376c1342b3"
 
 
 def artifact_root() -> Path:
-    return (
-        Path(__file__).resolve().parents[2]
-        / "data/raw/helix/Helix-ASPLOS25"
-    )
+    return Path(__file__).resolve().parents[2] / "data/raw/helix/Helix-ASPLOS25"
 
 
 def build_helix_model() -> ModelSpec:
@@ -38,6 +35,7 @@ def build_helix_model() -> ModelSpec:
         num_attention_heads=64,
         num_kv_heads=8,
         kv_element_bytes=2,
+        activation_element_bytes=2,
         flops_per_token_per_layer=24 * 8192**2,
     )
 
@@ -81,6 +79,41 @@ def build_helix_pipelines() -> tuple[Pipeline, Pipeline]:
     )
 
 
+def _run_summary(run, pipeline: Pipeline) -> dict:
+    if run is None:
+        return {}
+    return {
+        "feasible": run.feasible,
+        "final_time_s": run.final_time_s,
+        "processed_events": run.processed_events,
+        "peak_prefill": run.peak_prefill,
+        "peak_decode": run.peak_decode,
+        "min_link_headroom_bytes_per_s": run.min_link_headroom_bytes_per_s,
+        "peak_memory_bytes": run.peak_memory_bytes,
+        "peak_memory_utilization": {
+            node_id: (
+                used / pipeline.nodes[node_id].memory_capacity_bytes
+                if pipeline.nodes[node_id].memory_capacity_bytes > 0
+                else None
+            )
+            for node_id, used in run.peak_memory_bytes.items()
+        },
+        "first_violations": [
+            {
+                "time_s": violation.time_s,
+                "kind": violation.kind.value,
+                "object_id": violation.object_id,
+                "required": violation.required,
+                "capacity": violation.capacity,
+                "request_id": violation.request_id,
+                "num_prefill": violation.num_prefill,
+                "num_decode": violation.num_decode,
+            }
+            for violation in run.first_violations
+        ],
+    }
+
+
 def main() -> None:
     root = artifact_root()
     profiler = HelixA100Llama2Profiler.from_artifact(root, commit=HELIX_COMMIT)
@@ -96,10 +129,17 @@ def main() -> None:
         workload[-1].arrival_time_s - workload[0].arrival_time_s
     )
     sla = SLA(ttft_s=2.0, tpot_s=0.150, fixed_overhead_s=0.005)
-    config = EvaluatorConfig(decode_block_size=16)
+    config = EvaluatorConfig(
+        decode_block_size=16,
+        conservative_network_lifetime=True,
+    )
     result = {
         "helix_commit": HELIX_COMMIT,
         "experiment_quality": "mixed: M profile, generated Azure-derived workload, S topology/SLA",
+        "evaluator_semantics": {
+            "conservative_network_lifetime": config.conservative_network_lifetime,
+            "capacity_search": "sampled monotonicity verification + local refinement",
+        },
         "profile": {
             "source": profiler.provenance.source,
             "model": profiler.provenance.source_model,
@@ -127,13 +167,17 @@ def main() -> None:
         )
         violation = capacity.representative_unsafe_run.first_violation
         result["pipelines"][pipeline.id] = {
-            "safe_intensity_lower_bound": round(capacity.safe_intensity, 4),
-            "unsafe_intensity_upper_bound": round(capacity.unsafe_intensity, 4),
-            "safe_arrival_rate_lower_bound_rps": round(
-                capacity.safe_intensity * base_rate, 4
-            ),
+            "safe_intensity_lower_bound": capacity.safe_intensity,
+            "unsafe_intensity_upper_bound": capacity.unsafe_intensity,
+            "safe_arrival_rate_lower_bound_rps": capacity.safe_intensity * base_rate,
+            "unsafe_arrival_rate_upper_bound_rps": capacity.unsafe_intensity * base_rate,
             "first_unsafe_bottleneck": violation.kind.value if violation else None,
             "bottleneck_object": violation.object_id if violation else None,
+            "capacity_trials": len(capacity.trials),
+            "monotonicity_verified_on_samples": capacity.monotonicity_verified_on_samples,
+            "verification_probe_intensities": capacity.verification_probe_intensities,
+            "safe_run": _run_summary(capacity.representative_safe_run, pipeline),
+            "unsafe_run": _run_summary(capacity.representative_unsafe_run, pipeline),
         }
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
