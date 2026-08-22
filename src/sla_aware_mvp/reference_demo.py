@@ -11,7 +11,9 @@ from .reference import ReferenceConfig, find_reference_capacity
 from .workload import build_helix_azure_conversation_workload
 
 
-def _reference_run_summary(run, pipeline) -> dict:
+def _reference_run_summary(run, pipeline) -> dict | None:
+    if run is None:
+        return None
     return {
         "feasible": run.feasible,
         "final_time_s": run.final_time_s,
@@ -45,6 +47,10 @@ def _reference_run_summary(run, pipeline) -> dict:
     }
 
 
+def _rate(intensity: float | None, base_rate: float) -> float | None:
+    return intensity * base_rate if intensity is not None else None
+
+
 def main() -> None:
     root = artifact_root()
     profiler = HelixA100Llama2Profiler.from_artifact(root, commit=HELIX_COMMIT)
@@ -62,11 +68,12 @@ def main() -> None:
     sla = SLA(ttft_s=2.0, tpot_s=0.150, fixed_overhead_s=0.005)
     conservative_config = EvaluatorConfig(decode_block_size=16)
     reference_config = ReferenceConfig()
+    search_max_intensity = 16.0
 
     result = {
         "experiment_role": (
-            "reference-v0 smoke test only; two pipelines are insufficient for "
-            "ranking-correlation validation"
+            "reference-v0 execution smoke test; capacity may be right-censored, "
+            "and two pipelines are insufficient for ranking-correlation validation"
         ),
         "helix_commit": HELIX_COMMIT,
         "profile": {
@@ -81,12 +88,20 @@ def main() -> None:
             "kind": workload_sample.provenance.kind,
             "duration_s": 30,
             "requests": len(workload),
+            "total_output_tokens": sum(request.output_tokens for request in workload),
             "base_arrival_rate_rps": base_rate,
         },
         "sla": {
             "ttft_s": sla.ttft_s,
             "tpot_s": sla.tpot_s,
             "fixed_overhead_s": sla.fixed_overhead_s,
+        },
+        "capacity_search": {
+            "max_intensity": search_max_intensity,
+            "right_censoring_semantics": (
+                "if max_intensity is still safe, report C >= max_intensity with "
+                "unsafe bound/run = null and continue the smoke experiment"
+            ),
         },
         "conservative_semantics": {
             "progress_policy": "compute_only",
@@ -112,7 +127,7 @@ def main() -> None:
             config=conservative_config,
             profiler=profiler,
             tolerance=0.02,
-            max_intensity=16.0,
+            max_intensity=search_max_intensity,
             verification_grid_points=9,
         )
         conservative_elapsed = time.perf_counter() - conservative_started
@@ -125,39 +140,70 @@ def main() -> None:
             profiler=profiler,
             config=reference_config,
             tolerance=0.02,
-            max_intensity=16.0,
+            max_intensity=search_max_intensity,
             verification_grid_points=9,
         )
         reference_elapsed = time.perf_counter() - reference_started
 
-        conservative_violation = conservative.representative_unsafe_run.first_violation
-        reference_violation = reference.representative_unsafe_run.first_violation
+        conservative_unsafe = conservative.representative_unsafe_run
+        conservative_violation = (
+            conservative_unsafe.first_violation if conservative_unsafe is not None else None
+        )
+        reference_unsafe = reference.representative_unsafe_run
+        reference_violation = (
+            reference_unsafe.first_violation if reference_unsafe is not None else None
+        )
+
         result["pipelines"][pipeline.id] = {
             "conservative": {
                 "safe_intensity_lower_bound": conservative.safe_intensity,
                 "unsafe_intensity_upper_bound": conservative.unsafe_intensity,
-                "safe_arrival_rate_lower_bound_rps": conservative.safe_intensity * base_rate,
-                "unsafe_arrival_rate_upper_bound_rps": conservative.unsafe_intensity * base_rate,
+                "safe_arrival_rate_lower_bound_rps": _rate(
+                    conservative.safe_intensity, base_rate
+                ),
+                "unsafe_arrival_rate_upper_bound_rps": _rate(
+                    conservative.unsafe_intensity, base_rate
+                ),
+                "right_censored": conservative.right_censored,
+                "search_max_intensity": conservative.search_max_intensity,
                 "first_unsafe_kind": (
                     conservative_violation.kind.value if conservative_violation else None
                 ),
                 "capacity_trials": len(conservative.trials),
+                "monotonicity_verified_on_samples": (
+                    conservative.monotonicity_verified_on_samples
+                ),
+                "verification_probe_intensities": (
+                    conservative.verification_probe_intensities
+                ),
                 "elapsed_wall_s": conservative_elapsed,
             },
             "reference": {
                 "safe_intensity_lower_bound": reference.safe_intensity,
                 "unsafe_intensity_upper_bound": reference.unsafe_intensity,
-                "safe_arrival_rate_lower_bound_rps": reference.safe_intensity * base_rate,
-                "unsafe_arrival_rate_upper_bound_rps": reference.unsafe_intensity * base_rate,
-                "first_unsafe_kind": reference_violation.kind if reference_violation else None,
+                "safe_arrival_rate_lower_bound_rps": _rate(
+                    reference.safe_intensity, base_rate
+                ),
+                "unsafe_arrival_rate_upper_bound_rps": _rate(
+                    reference.unsafe_intensity, base_rate
+                ),
+                "right_censored": reference.right_censored,
+                "search_max_intensity": reference.search_max_intensity,
+                "first_unsafe_kind": (
+                    reference_violation.kind if reference_violation else None
+                ),
                 "capacity_trials": len(reference.trials),
+                "monotonicity_verified_on_samples": (
+                    reference.monotonicity_verified_on_samples
+                ),
+                "verification_probe_intensities": (
+                    reference.verification_probe_intensities
+                ),
                 "elapsed_wall_s": reference_elapsed,
                 "safe_run": _reference_run_summary(
                     reference.representative_safe_run, pipeline
                 ),
-                "unsafe_run": _reference_run_summary(
-                    reference.representative_unsafe_run, pipeline
-                ),
+                "unsafe_run": _reference_run_summary(reference_unsafe, pipeline),
             },
         }
 
