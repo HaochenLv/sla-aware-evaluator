@@ -37,8 +37,8 @@ class ReferenceConfig:
     v0 deliberately does not reuse the Conservative Evaluator's
     SLA->required-bandwidth reservation formula. It models explicit GPU service
     and explicit FCFS link transfers. Decode compute uses a deterministic
-    microbatch rule: when a GPU becomes idle and the FIFO head is Decode, all
-    contiguous Decode operations at the head are served as one batch.
+    microbatch rule: when a GPU becomes idle and the FIFO head is Decode, the
+    contiguous Decode operations for that same stage are served as one batch.
     """
 
     time_epsilon: float = 1e-9
@@ -169,8 +169,8 @@ def evaluate_reference(
 
     - GPU stages are queued servers rather than a residual-SLA reservation.
     - physical links are queued FCFS byte-transfer servers with service D/B.
-    - Decode GPU work uses deterministic microbatches derived from queued Decode
-      operations, not active-request bandwidth commitments.
+    - Decode GPU work uses deterministic queued microbatches rather than active-
+      request bandwidth commitments.
     - TTFT is aligned with the current research model and measured at end of
       Prefill (plus configured fixed/queue overhead).
     - strong TPOT is measured as every end-to-end Decode-token interval.
@@ -210,7 +210,6 @@ def evaluate_reference(
     peak_decode = 0
     processed_events = 0
 
-    # Completion/timer heap: (time, sequence, event_kind, resource_kind, resource_id, payload)
     completion_heap: list[tuple[float, int, str, str, str, object]] = []
     seq = 0
     enqueue_seq = 0
@@ -231,7 +230,12 @@ def evaluate_reference(
             (when, seq, event_kind, resource_kind, resource_id, payload),
         )
 
-    def enqueue_compute(request_id: str, phase: Phase, stage_index: int, token_index: int | None) -> None:
+    def enqueue_compute(
+        request_id: str,
+        phase: Phase,
+        stage_index: int,
+        token_index: int | None,
+    ) -> None:
         nonlocal enqueue_seq
         enqueue_seq += 1
         stage = ordered_stages[stage_index]
@@ -302,10 +306,8 @@ def evaluate_reference(
             )
 
     def start_idle_servers() -> None:
-        n_prefill, _ = _counts(states)
+        n_prefill, n_decode_active = _counts(states)
 
-        # GPU nodes: Prefill is FCFS per request. Decode operations at the FIFO
-        # head are microbatched as one service invocation.
         for node_id in sorted(node_servers):
             server = node_servers[node_id]
             if server.busy or not server.queue:
@@ -313,7 +315,11 @@ def evaluate_reference(
             first = server.queue[0]
             batch: list[_Operation] = []
             if first.phase == Phase.DECODE:
-                while server.queue and server.queue[0].phase == Phase.DECODE:
+                while (
+                    server.queue
+                    and server.queue[0].phase == Phase.DECODE
+                    and server.queue[0].stage_index == first.stage_index
+                ):
                     batch.append(server.queue.popleft())
             else:
                 batch.append(server.queue.popleft())
@@ -326,7 +332,7 @@ def evaluate_reference(
                     pipeline,
                     stage,
                     n_prefill,
-                    0,
+                    n_decode_active,
                 )
             else:
                 batch_size = len(batch)
@@ -355,7 +361,6 @@ def evaluate_reference(
                 tuple(batch),
             )
 
-        # Physical links: strict FCFS transfer service, one transfer at a time.
         for link_id in sorted(link_servers):
             server = link_servers[link_id]
             if server.busy or not server.queue:
@@ -398,7 +403,6 @@ def evaluate_reference(
         while completion_heap and completion_heap[0][0] <= current_time + config.time_epsilon:
             due.append(heapq.heappop(completion_heap))
 
-        # First free all resources whose service completed at this timestamp.
         for _, _, event_kind, resource_kind, resource_id, _ in due:
             if event_kind != "server_complete":
                 continue
@@ -407,8 +411,6 @@ def evaluate_reference(
             elif resource_kind == "link":
                 link_servers[resource_id].busy = False
 
-        # Then apply completions/timers atomically. New operations are appended
-        # but no server restarts until all same-time events and arrivals are seen.
         for _, _, event_kind, resource_kind, resource_id, payload in due:
             processed_events += 1
             if event_kind == "server_complete":
