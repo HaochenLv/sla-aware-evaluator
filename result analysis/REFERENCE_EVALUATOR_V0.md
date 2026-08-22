@@ -151,7 +151,29 @@ Two pipelines are **not** enough to validate ranking correlation. This run only 
 
 A censored 30-second capacity is not a reason to tune the workload. A later ranking-capacity experiment may use a longer workload, such as the already exercised 120-second trace, if an observed frontier is needed.
 
-## 9. Do not do yet
+## 9. Result-driven repair checkpoint
+
+The first Codex smoke run had the following outcome:
+
+```text
+21/21 tests passed
+reference_demo terminated before Reference execution
+cause: Conservative 30-second workload remained safe at max_intensity=16
+```
+
+The branch now contains only the minimal repair implied by that result:
+
+- Conservative capacity search supports right-censored upper search ranges;
+- Reference capacity search supports the same right-censoring semantics;
+- `reference_demo.py` serializes `null` unsafe bounds/runs and continues both evaluators;
+- `helix_demo.py` is compatible with the new result type;
+- regression tests cover bracketed and right-censored outcomes for both evaluators.
+
+No scheduler, profile, workload, SLA, bandwidth, routing, or deployment-search semantics were changed by this repair.
+
+The next action is therefore **rerun the same smoke experiment**, not add more model features.
+
+## 10. Do not do yet
 
 Before the repaired smoke result is reviewed, do not add:
 
