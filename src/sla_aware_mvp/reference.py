@@ -31,6 +31,32 @@ class StageProfiler(Protocol):
 
 
 @dataclass(frozen=True)
+class ReferenceTraceEvent:
+    """Observational event emitted by Reference v0 without changing scheduling.
+
+    The trace exists only to attribute latency after an experiment. Queueing and
+    service decisions are made exactly as before; the evaluator merely reports
+    when an operation is enqueued, starts service, completes service, or starts /
+    completes a Decode token.
+    """
+
+    time_s: float
+    event: str
+    resource_kind: str
+    resource_id: str
+    request_id: str
+    phase: str
+    stage_id: str | None
+    token_index: int | None
+    operation_seq: int | None
+    batch_size: int | None = None
+
+
+class ReferenceTraceSink(Protocol):
+    def record(self, event: ReferenceTraceEvent) -> None: ...
+
+
+@dataclass(frozen=True)
 class ReferenceConfig:
     """Execution policy for the independent reference evaluator.
 
@@ -164,6 +190,7 @@ def evaluate_reference(
     sla: SLA,
     profiler: StageProfiler,
     config: ReferenceConfig | None = None,
+    trace_sink: ReferenceTraceSink | None = None,
 ) -> ReferenceEvaluationResult:
     """Explicit-service finite-workload reference evaluator v0.
 
@@ -176,6 +203,10 @@ def evaluate_reference(
     - TTFT is aligned with the current research model and measured at end of
       Prefill (plus configured fixed/queue overhead).
     - strong TPOT is measured as every end-to-end Decode-token interval.
+
+    ``trace_sink`` is observational only. Supplying one emits timestamps for
+    queue/service/token events but does not alter queue order, batching, service
+    duration, event ordering, or feasibility semantics.
 
     This is a reference *simulation*, not a claim to reproduce vLLM/HELIX runtime
     scheduling exactly. Its role is to provide a mechanically independent
@@ -218,6 +249,45 @@ def evaluate_reference(
     arrival_index = 0
     current_time = requests[0].arrival_time_s
 
+    def emit(
+        *,
+        event: str,
+        operation: _Operation | None = None,
+        resource_kind: str = "",
+        resource_id: str = "",
+        request_id: str | None = None,
+        phase: Phase | None = None,
+        stage_id: str | None = None,
+        token_index: int | None = None,
+        batch_size: int | None = None,
+    ) -> None:
+        if trace_sink is None:
+            return
+        if operation is not None:
+            request_id = operation.request_id
+            phase = operation.phase
+            token_index = operation.token_index
+            stage_id = ordered_stages[operation.stage_index].id
+            operation_seq: int | None = operation.enqueue_seq
+        else:
+            operation_seq = None
+        if request_id is None or phase is None:
+            raise RuntimeError("trace event requires request and phase")
+        trace_sink.record(
+            ReferenceTraceEvent(
+                time_s=current_time,
+                event=event,
+                resource_kind=resource_kind,
+                resource_id=resource_id,
+                request_id=request_id,
+                phase=phase.value,
+                stage_id=stage_id,
+                token_index=token_index,
+                operation_seq=operation_seq,
+                batch_size=batch_size,
+            )
+        )
+
     def push_event(
         when: float,
         event_kind: str,
@@ -241,15 +311,20 @@ def evaluate_reference(
         nonlocal enqueue_seq
         enqueue_seq += 1
         stage = ordered_stages[stage_index]
-        node_servers[stage.node_id].queue.append(
-            _Operation(
-                request_id=request_id,
-                phase=phase,
-                kind="compute",
-                stage_index=stage_index,
-                token_index=token_index,
-                enqueue_seq=enqueue_seq,
-            )
+        operation = _Operation(
+            request_id=request_id,
+            phase=phase,
+            kind="compute",
+            stage_index=stage_index,
+            token_index=token_index,
+            enqueue_seq=enqueue_seq,
+        )
+        node_servers[stage.node_id].queue.append(operation)
+        emit(
+            event="queue_enqueue",
+            operation=operation,
+            resource_kind="node",
+            resource_id=stage.node_id,
         )
 
     def enqueue_link(
@@ -263,17 +338,22 @@ def evaluate_reference(
         nonlocal enqueue_seq
         enqueue_seq += 1
         link_id = route_link_ids[route_position]
-        link_servers[link_id].queue.append(
-            _Operation(
-                request_id=request_id,
-                phase=phase,
-                kind="link",
-                stage_index=stage_index,
-                token_index=token_index,
-                route_link_ids=route_link_ids,
-                route_position=route_position,
-                enqueue_seq=enqueue_seq,
-            )
+        operation = _Operation(
+            request_id=request_id,
+            phase=phase,
+            kind="link",
+            stage_index=stage_index,
+            token_index=token_index,
+            route_link_ids=route_link_ids,
+            route_position=route_position,
+            enqueue_seq=enqueue_seq,
+        )
+        link_servers[link_id].queue.append(operation)
+        emit(
+            event="queue_enqueue",
+            operation=operation,
+            resource_kind="link",
+            resource_id=link_id,
         )
 
     def route_after_stage(operation: _Operation) -> None:
@@ -330,12 +410,25 @@ def evaluate_reference(
                 )
             state.phase = Phase.DECODE
             state.token_start_s = current_time
+            emit(
+                event="token_start",
+                request_id=state.spec.id,
+                phase=Phase.DECODE,
+                stage_id=ordered_stages[0].id,
+                token_index=0,
+            )
             enqueue_compute(state.spec.id, Phase.DECODE, 0, 0)
             return
 
         if state.token_start_s is None:
             raise RuntimeError("decode token completed without start time")
         observed = current_time - state.token_start_s
+        emit(
+            event="token_complete",
+            operation=operation,
+            resource_kind="token",
+            resource_id="",
+        )
         state.max_tpot_s = max(state.max_tpot_s, observed)
         max_tpot_by_request[state.spec.id] = state.max_tpot_s
         if observed > sla.tpot_s + config.time_epsilon:
@@ -356,6 +449,13 @@ def evaluate_reference(
             del states[state.spec.id]
         else:
             state.token_start_s = current_time
+            emit(
+                event="token_start",
+                request_id=state.spec.id,
+                phase=Phase.DECODE,
+                stage_id=ordered_stages[0].id,
+                token_index=state.completed_tokens,
+            )
             enqueue_compute(
                 state.spec.id,
                 Phase.DECODE,
@@ -411,6 +511,14 @@ def evaluate_reference(
                 service_s = max(durations)
             if service_s < 0:
                 raise ValueError("profile service time cannot be negative")
+            for operation in batch:
+                emit(
+                    event="service_start",
+                    operation=operation,
+                    resource_kind="node",
+                    resource_id=node_id,
+                    batch_size=len(batch),
+                )
             push_event(
                 current_time + service_s,
                 "server_complete",
@@ -431,6 +539,13 @@ def evaluate_reference(
             )
             data_bytes = pipeline.model.activation_bytes_per_token * transfer_tokens
             service_s = data_bytes / pipeline.links[link_id].capacity_bytes_per_s
+            emit(
+                event="service_start",
+                operation=operation,
+                resource_kind="link",
+                resource_id=link_id,
+                batch_size=1,
+            )
             push_event(
                 current_time + service_s,
                 "server_complete",
@@ -469,7 +584,7 @@ def evaluate_reference(
             elif resource_kind == "link":
                 link_servers[resource_id].busy = False
 
-        for _, _, event_kind, resource_kind, _, payload in due:
+        for _, _, event_kind, resource_kind, resource_id, payload in due:
             processed_events += 1
             if event_kind == "phase_finalize":
                 finalize_operation(payload, batch_violations)  # type: ignore[arg-type]
@@ -477,6 +592,12 @@ def evaluate_reference(
 
             operations = tuple(payload)  # type: ignore[arg-type]
             for operation in operations:
+                emit(
+                    event="service_complete",
+                    operation=operation,
+                    resource_kind=resource_kind,
+                    resource_id=resource_id,
+                )
                 if resource_kind == "node":
                     route_after_stage(operation)
                 else:
@@ -616,8 +737,8 @@ def find_reference_capacity(
                 pipeline=pipeline,
                 workload=scale_workload(workload, key),
                 sla=sla,
-                profiler=profiler,
                 config=config,
+                profiler=profiler,
             )
             cache[key] = result
             trials.append(
