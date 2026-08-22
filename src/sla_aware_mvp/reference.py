@@ -305,6 +305,62 @@ def evaluate_reference(
                 operation.token_index,
             )
 
+    def finalize_operation(
+        operation: _Operation,
+        batch_violations: list[ReferenceViolation],
+    ) -> None:
+        nonlocal completed_requests, completed_tokens
+        state = states[operation.request_id]
+        if operation.phase == Phase.PREFILL:
+            observed = current_time - state.spec.arrival_time_s
+            state.ttft_s = observed
+            ttft_by_request[state.spec.id] = observed
+            if observed > sla.ttft_s + config.time_epsilon:
+                batch_violations.append(
+                    ReferenceViolation(
+                        current_time,
+                        "ttft",
+                        "request",
+                        observed,
+                        sla.ttft_s,
+                        state.spec.id,
+                    )
+                )
+            state.phase = Phase.DECODE
+            state.token_start_s = current_time
+            enqueue_compute(state.spec.id, Phase.DECODE, 0, 0)
+            return
+
+        if state.token_start_s is None:
+            raise RuntimeError("decode token completed without start time")
+        observed = current_time - state.token_start_s
+        state.max_tpot_s = max(state.max_tpot_s, observed)
+        max_tpot_by_request[state.spec.id] = state.max_tpot_s
+        if observed > sla.tpot_s + config.time_epsilon:
+            batch_violations.append(
+                ReferenceViolation(
+                    current_time,
+                    "tpot",
+                    "request",
+                    observed,
+                    sla.tpot_s,
+                    state.spec.id,
+                )
+            )
+        state.completed_tokens += 1
+        completed_tokens += 1
+        if state.completed_tokens >= state.spec.output_tokens:
+            completed_requests += 1
+            del states[state.spec.id]
+        else:
+            state.token_start_s = current_time
+            enqueue_compute(
+                state.spec.id,
+                Phase.DECODE,
+                0,
+                state.completed_tokens,
+            )
+
     def start_idle_servers() -> None:
         n_prefill, n_decode_active = _counts(states)
 
@@ -411,82 +467,45 @@ def evaluate_reference(
             elif resource_kind == "link":
                 link_servers[resource_id].busy = False
 
-        for _, _, event_kind, resource_kind, resource_id, payload in due:
+        for _, _, event_kind, resource_kind, _, payload in due:
             processed_events += 1
-            if event_kind == "server_complete":
-                operations = tuple(payload)  # type: ignore[arg-type]
-                for operation in operations:
-                    if resource_kind == "node":
-                        route_after_stage(operation)
-                    else:
-                        if operation.route_position + 1 < len(operation.route_link_ids):
-                            enqueue_link(
-                                operation.request_id,
-                                operation.phase,
-                                operation.stage_index,
-                                operation.token_index,
-                                operation.route_link_ids,
-                                operation.route_position + 1,
-                            )
-                        else:
-                            enqueue_compute(
-                                operation.request_id,
-                                operation.phase,
-                                operation.stage_index + 1,
-                                operation.token_index,
-                            )
+            if event_kind == "phase_finalize":
+                finalize_operation(payload, batch_violations)  # type: ignore[arg-type]
                 continue
 
-            operation = payload  # type: ignore[assignment]
-            state = states[operation.request_id]
-            if operation.phase == Phase.PREFILL:
-                observed = current_time - state.spec.arrival_time_s
-                state.ttft_s = observed
-                ttft_by_request[state.spec.id] = observed
-                if observed > sla.ttft_s + config.time_epsilon:
-                    batch_violations.append(
-                        ReferenceViolation(
-                            current_time,
-                            "ttft",
-                            "request",
-                            observed,
-                            sla.ttft_s,
-                            state.spec.id,
-                        )
-                    )
-                state.phase = Phase.DECODE
-                state.token_start_s = current_time
-                enqueue_compute(state.spec.id, Phase.DECODE, 0, 0)
-            else:
-                if state.token_start_s is None:
-                    raise RuntimeError("decode token completed without start time")
-                observed = current_time - state.token_start_s
-                state.max_tpot_s = max(state.max_tpot_s, observed)
-                max_tpot_by_request[state.spec.id] = state.max_tpot_s
-                if observed > sla.tpot_s + config.time_epsilon:
-                    batch_violations.append(
-                        ReferenceViolation(
-                            current_time,
-                            "tpot",
-                            "request",
-                            observed,
-                            sla.tpot_s,
-                            state.spec.id,
-                        )
-                    )
-                state.completed_tokens += 1
-                completed_tokens += 1
-                if state.completed_tokens >= state.spec.output_tokens:
-                    completed_requests += 1
-                    del states[state.spec.id]
+            operations = tuple(payload)  # type: ignore[arg-type]
+            for operation in operations:
+                if resource_kind == "node":
+                    route_after_stage(operation)
                 else:
-                    state.token_start_s = current_time
-                    enqueue_compute(
-                        state.spec.id,
-                        Phase.DECODE,
-                        0,
-                        state.completed_tokens,
-                    )
+                    if operation.route_position + 1 < len(operation.route_link_ids):
+                        enqueue_link(
+                            operation.request_id,
+                            operation.phase,
+                            operation.stage_index,
+                            operation.token_index,
+                            operation.route_link_ids,
+                            operation.route_position + 1,
+                        )
+                    else:
+                        enqueue_compute(
+                            operation.request_id,
+                            operation.phase,
+                            operation.stage_index + 1,
+                            operation.token_index,
+                        )
+
+        # A zero configured overhead creates same-timestamp phase finalization.
+        # Drain those timer events before restarting resources so all transitions
+        # at t are atomic and Decode operations can form the intended microbatch.
+        while (
+            completion_heap
+            and completion_heap[0][0] <= current_time + config.time_epsilon
+            and completion_heap[0][2] == "phase_finalize"
+        ):
+            _, _, _, _, _, payload = heapq.heappop(completion_heap)
+            processed_events += 1
+            finalize_operation(payload, batch_violations)  # type: ignore[arg-type]
 
         arrivals: list[RequestSpec] = []
         while (
