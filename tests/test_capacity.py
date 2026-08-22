@@ -14,19 +14,21 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(scaled[1].input_tokens, workload[1].input_tokens)
         self.assertAlmostEqual(scaled[2].arrival_time_s, workload[2].arrival_time_s / 2)
 
-    def test_capacity_is_bracketed(self):
+    def test_capacity_is_bracketed_after_sampled_monotonicity_check(self):
         pipeline, _ = build_pipelines()
         result = find_capacity(
             pipeline=pipeline,
             workload=build_workload(),
             sla=SLA(ttft_s=1.0, tpot_s=0.070, fixed_overhead_s=0.005),
             tolerance=0.03,
+            verification_grid_points=7,
         )
         self.assertGreater(result.safe_intensity, 0)
         self.assertGreater(result.unsafe_intensity, result.safe_intensity)
         self.assertFalse(result.representative_unsafe_run.feasible)
+        self.assertTrue(result.monotonicity_verified_on_samples)
+        self.assertGreater(len(result.verification_probe_intensities), 0)
 
 
 if __name__ == "__main__":
     unittest.main()
-
