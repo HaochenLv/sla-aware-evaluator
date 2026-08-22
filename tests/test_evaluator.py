@@ -40,6 +40,9 @@ class EvaluatorTests(unittest.TestCase):
         for pipeline in build_pipelines():
             pipeline.validate()
 
+    def test_default_progress_policy_is_compute_only(self):
+        self.assertFalse(EvaluatorConfig().conservative_network_lifetime)
+
     def test_finite_workload_drains(self):
         pipeline, _ = build_pipelines()
         result = evaluate(
@@ -50,7 +53,7 @@ class EvaluatorTests(unittest.TestCase):
         self.assertTrue(result.feasible)
         self.assertGreater(result.final_time_s, build_workload()[1].arrival_time_s)
 
-    def test_continuous_progress_survives_arrival_without_network_lifetime(self):
+    def test_continuous_progress_survives_arrival_under_default_policy(self):
         _, pipeline = build_pipelines()
         workload = (
             RequestSpec("decode", 0.0, 1, 48),
@@ -61,9 +64,7 @@ class EvaluatorTests(unittest.TestCase):
             pipeline=pipeline,
             workload=workload,
             sla=SLA(ttft_s=10.0, tpot_s=10.0),
-            config=EvaluatorConfig(
-                record_trace=True, conservative_network_lifetime=False
-            ),
+            config=EvaluatorConfig(record_trace=True),
             profiler=FixedProfiler(),
         )
         snapshot = next(
@@ -71,10 +72,10 @@ class EvaluatorTests(unittest.TestCase):
         )
         self.assertAlmostEqual(snapshot.request_progress["decode"], 38.6666667, places=5)
 
-    def test_network_commitment_extends_active_lifetime(self):
+    def test_full_sla_window_ablation_extends_active_lifetime(self):
         _, pipeline = build_pipelines()
         request = RequestSpec("r", 0.0, 1, 2)
-        conservative = evaluate(
+        full_sla_window = evaluate(
             pipeline=pipeline,
             workload=(request,),
             sla=SLA(ttft_s=1.0, tpot_s=0.5),
@@ -88,9 +89,9 @@ class EvaluatorTests(unittest.TestCase):
             config=EvaluatorConfig(conservative_network_lifetime=False),
             profiler=FastProfiler(),
         )
-        self.assertTrue(conservative.feasible)
+        self.assertTrue(full_sla_window.feasible)
         self.assertTrue(compute_only.feasible)
-        self.assertGreater(conservative.final_time_s, compute_only.final_time_s)
+        self.assertGreater(full_sla_window.final_time_s, compute_only.final_time_s)
 
     def test_block_context_uses_same_epsilon_policy(self):
         runtime = RequestRuntime(
