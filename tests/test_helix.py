@@ -44,7 +44,25 @@ class HelixTests(unittest.TestCase):
             profiler.prompt.lookup_seconds_per_layer(sample.input_tokens)
             * pipeline.model.num_layers
         )
-        self.assertAlmostEqual(profiler.prefill_time(sample, pipeline, 1, 0), expected)
+        pipeline_prefill = profiler.prefill_time(sample, pipeline, 1, 0)
+        stage_prefill = sum(
+            profiler.prefill_stage_time(sample, pipeline, stage, 1, 0)
+            for stage in pipeline.stages
+        )
+        self.assertAlmostEqual(pipeline_prefill, expected)
+        self.assertAlmostEqual(stage_prefill, pipeline_prefill)
+
+        context = sample.input_tokens + 7
+        pipeline_decode = profiler.decode_time_per_token(
+            sample, context, pipeline, 0, 8
+        )
+        stage_decode = sum(
+            profiler.decode_stage_time_per_token(
+                sample, context, pipeline, stage, 0, 8
+            )
+            for stage in pipeline.stages
+        )
+        self.assertAlmostEqual(stage_decode, pipeline_decode)
         self.assertNotIn("context_len", profiler.provenance.observed_dimensions)
 
     def test_azure_workload_is_safe_and_deterministic(self):
