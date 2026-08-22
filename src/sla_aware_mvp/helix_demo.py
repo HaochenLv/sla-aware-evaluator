@@ -129,14 +129,17 @@ def main() -> None:
         workload[-1].arrival_time_s - workload[0].arrival_time_s
     )
     sla = SLA(ttft_s=2.0, tpot_s=0.150, fixed_overhead_s=0.005)
-    config = EvaluatorConfig(
-        decode_block_size=16,
-        conservative_network_lifetime=True,
+    config = EvaluatorConfig(decode_block_size=16)
+    progress_policy = (
+        "full_sla_window_ablation"
+        if config.conservative_network_lifetime
+        else "compute_only"
     )
     result = {
         "helix_commit": HELIX_COMMIT,
         "experiment_quality": "mixed: M profile, generated Azure-derived workload, S topology/SLA",
         "evaluator_semantics": {
+            "progress_policy": progress_policy,
             "conservative_network_lifetime": config.conservative_network_lifetime,
             "capacity_search": "sampled monotonicity verification + local refinement",
         },
