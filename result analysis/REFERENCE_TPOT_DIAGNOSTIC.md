@@ -4,76 +4,122 @@ Branch: `feat/reference-evaluator-v0`
 
 ## Why this diagnostic exists
 
-The repaired 30-second HELIX smoke test successfully executed Reference v0, but exposed two signals that must be understood before any 20-30 Pipeline ranking experiment:
+The repaired 30-second HELIX smoke successfully executed Reference v0, but the first unsafe run showed a large TPOT jump when Decode overlap appeared:
 
-- Reference safe capacity was roughly `0.016 req/s` for both Slow and Fast, far below the Conservative result.
-- Reference remained safe with `peak_decode=1`, then the first unsafe run appeared with `peak_decode=2` and a large TPOT jump (`~0.52 s` Slow, `~0.37 s` Fast vs `0.15 s` SLA).
+- Slow: about `0.52 s`;
+- Fast: about `0.37 s`;
+- SLA: `0.150 s`;
+- safe run `peak_decode=1`, unsafe run `peak_decode=2`.
 
-This does **not** yet justify changing the scheduler. The next step is to identify what portion of the failing TPOT interval comes from explicit service versus waiting/synchronization under the current Reference v0 semantics.
+The first diagnostic then showed that direct per-token `D/B` transfer time was tiny, while more than 80% of the failing TPOT remained in a residual waiting/synchronization bucket. Multiplying link capacity by `1e6` did not remove the failure: both pipelines still had roughly `0.344 s` TPOT. The failing token also used Decode batch size 1 at every stage despite two active Decode requests.
 
-## Added diagnostic path
+That evidence localizes the problem to waiting/synchronization, but the old residual mixed GPU queue wait, link queue wait, and pipeline/batching effects. It is still not enough evidence to rewrite the scheduler.
 
-`reference_diagnostics.py` wraps the existing Stage profiler without changing Reference v0 execution. For the request/token that first violates TPOT it reports:
+## Exact observational tracing
+
+Reference v0 now accepts an optional observational `trace_sink`. The scheduler is unchanged. The trace only records timestamps for:
+
+- resource queue enqueue;
+- resource service start;
+- resource service completion;
+- Decode token start;
+- Decode token completion.
+
+The trace hook does **not** modify queue order, microbatch formation, service durations, event ordering, capacity search, SLA checks, or feasibility.
+
+For the first TPOT-violating token, the diagnostic now measures:
 
 ```text
 observed TPOT
-= profiled GPU stage service
-+ explicit D/B link service
+= GPU queue wait
++ GPU service elapsed
++ link queue wait
++ link service elapsed
 + configured overhead
-+ residual waiting/synchronization
++ unattributed
 ```
 
-The residual is deliberately not named `GPU wait`. It can include:
+`unattributed` should be approximately zero if all simulated time is closed by the trace. This is stronger than the previous residual calculation because queue waiting is measured directly from enqueue/start timestamps instead of inferred as a remainder.
 
-- GPU queueing;
-- link queueing;
-- batching/synchronization effects not represented by the summed per-request profile calls.
+The diagnostic also reports:
 
-For the HELIX adapter, Decode stage time does not depend on request context and all stages use the same A100 profile, so the recorded per-request stage service for a given microbatch matches the batch stage duration used by Reference v0.
+- GPU queue wait per stage;
+- GPU service elapsed per stage;
+- link queue wait per physical link;
+- link service elapsed per physical link;
+- actual Decode batch size at each GPU service start;
+- profiler-returned per-stage Decode service for comparison with elapsed batch service.
+
+For backwards readability, `residual_wait_s` now means the **measured** sum:
+
+```text
+GPU queue wait + link queue wait
+```
+
+and `unattributed_s` is reported separately.
 
 ## Network counterfactual
 
-The diagnostic then replays the *same scaled finite workload at the same intensity* with every physical-link capacity multiplied by `1e6`.
+The same scaled workload and same first-unsafe intensity are replayed with every physical-link capacity multiplied by `1e6`.
 
-This counterfactual is diagnostic only; it is not a new serving model or a result used for capacity ranking.
+The counterfactual is traced with the same instrumentation and reports:
 
-Interpretation:
+- GPU queue wait;
+- GPU service elapsed;
+- link queue wait;
+- link service elapsed;
+- unattributed time;
+- Decode batch sizes.
 
-- if the original TPOT violation disappears or drops sharply, network transfer/queueing is materially responsible;
-- if the violation persists with similar magnitude, the dominant cause lies in GPU queueing / Decode batching / synchronization under Reference v0 rather than physical-link service.
+This lets us distinguish two different network effects:
+
+1. direct link service / link queueing;
+2. network-induced changes in GPU/pipeline phase alignment that later appear as GPU queue wait.
+
+Therefore a large TPOT reduction after increasing bandwidth is not automatically interpreted as direct transmission cost; the exact queue attribution must show where the removed time went.
+
+## Regression tests
+
+The diagnostic tests now cover three invariants:
+
+1. adding a trace sink does not change the Reference evaluation result;
+2. a link-driven toy TPOT failure closes as explicit GPU service + link service with zero queue/unattributed time;
+3. a deliberately constructed Decode interference case attributes the failing token's delay to GPU queue wait and closes the TPOT exactly.
+
+The existing infinite-network toy counterfactual remains as a control showing that a genuinely link-driven failure can disappear when link capacity is removed as a bottleneck.
 
 ## Run
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 -m sla_aware_mvp.reference_diagnostic_demo \
-  > outputs/reference_v0_tpot_diagnostic.json
-python3 -m json.tool outputs/reference_v0_tpot_diagnostic.json > /dev/null
+  > outputs/reference_v0_tpot_queue_attribution.json
+python3 -m json.tool outputs/reference_v0_tpot_queue_attribution.json > /dev/null
 ```
 
-The diagnostic demo intentionally reuses the same:
+The HELIX diagnostic intentionally reuses the same:
 
-- HELIX LLaMA-2-70B / A100 profile;
+- LLaMA-2-70B / A100 profile;
 - 30-second generated Azure-derived workload;
 - TTFT `2.0 s`;
 - TPOT `0.150 s`;
 - fixed overhead `0.005 s`;
-- Slow/Fast pipelines.
+- Slow/Fast pipelines;
+- Reference first-unsafe intensity search.
 
-It first recovers each pipeline's Reference unsafe intensity and then diagnoses that exact first-unsafe point.
+## Next decision
 
-## Decision rule for the next code change
+Do **not** start the multi-pipeline ranking experiment yet.
 
-Do **not** enter the multi-pipeline ranking experiment yet.
+The next experiment should answer:
 
-First inspect:
+1. what fraction of failing TPOT is exact GPU queue wait;
+2. what fraction is exact link queue wait;
+3. whether `unattributed_s` is effectively zero;
+4. which stages accumulate the GPU queue wait;
+5. whether the `1e6`-bandwidth counterfactual mainly reduces link wait or changes downstream GPU queue wait;
+6. whether the failing token remains batch size 1 at all stages.
 
-1. `residual_wait_fraction` at the first TPOT failure;
-2. `decode_batch_sizes` across the failing token's stages;
-3. `gpu_profile_service_s` versus `explicit_link_service_s`;
-4. whether the `1e6`-bandwidth counterfactual is still unsafe;
-5. how much the counterfactual max TPOT changes.
+If the trace shows that the dominant delay is GPU queue wait while active Decode requests fail to batch together, that is strong evidence to review the Reference Decode batching policy. If link queueing is dominant, network contention should be fixed or modeled before touching Decode scheduling.
 
-If waiting remains dominant and the infinite-network replay still violates TPOT, then the next code change should focus on the Reference Decode batching/queueing policy. If the violation disappears under the network counterfactual, inspect explicit link contention before touching GPU scheduling.
-
-This checkpoint deliberately changes diagnostics only. It does not modify Conservative semantics, Reference scheduling, workload, SLA, HELIX profiling, physical topology, or deployment search.
+This checkpoint adds measurement hooks only. It does not yet replace the Reference scheduler.
