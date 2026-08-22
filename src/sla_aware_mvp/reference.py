@@ -81,12 +81,14 @@ class ReferenceCapacityTrial:
 @dataclass(frozen=True)
 class ReferenceCapacityResult:
     safe_intensity: float
-    unsafe_intensity: float
+    unsafe_intensity: float | None
     trials: tuple[ReferenceCapacityTrial, ...]
     representative_safe_run: ReferenceEvaluationResult
-    representative_unsafe_run: ReferenceEvaluationResult
+    representative_unsafe_run: ReferenceEvaluationResult | None
     monotonicity_verified_on_samples: bool
     verification_probe_intensities: tuple[float, ...]
+    right_censored: bool
+    search_max_intensity: float
 
 
 @dataclass
@@ -592,6 +594,11 @@ def find_reference_capacity(
     The evaluator is independent; only the workload-intensity search policy is
     intentionally matched so rank comparisons are not confounded by different
     numerical search procedures.
+
+    If the finite workload remains feasible at ``max_intensity``, the capacity
+    observation is right-censored: the evaluated search limit is returned as a
+    safe lower bound, while the unsafe bound/run are left as ``None``. This is a
+    legitimate result C >= max_intensity, not an execution failure.
     """
 
     if initial_intensity <= 0 or tolerance <= 0 or max_intensity <= 0:
@@ -638,7 +645,20 @@ def find_reference_capacity(
             low = candidate
             high = candidate
         if high_run.feasible:
-            raise RuntimeError("no unsafe reference intensity found below max_intensity")
+            sampled = tuple(
+                trial.intensity for trial in sorted(trials, key=lambda item: item.intensity)
+            )
+            return ReferenceCapacityResult(
+                safe_intensity=high,
+                unsafe_intensity=None,
+                trials=tuple(trials),
+                representative_safe_run=high_run,
+                representative_unsafe_run=None,
+                monotonicity_verified_on_samples=True,
+                verification_probe_intensities=sampled,
+                right_censored=True,
+                search_max_intensity=max_intensity,
+            )
     else:
         unsafe_anchor = high
         unsafe_anchor_run = high_run
@@ -701,11 +721,13 @@ def find_reference_capacity(
             high_run = mid_run
 
     return ReferenceCapacityResult(
-        low,
-        high,
-        tuple(trials),
-        safe_run,
-        high_run,
-        True,
-        tuple(probe_intensities),
+        safe_intensity=low,
+        unsafe_intensity=high,
+        trials=tuple(trials),
+        representative_safe_run=safe_run,
+        representative_unsafe_run=high_run,
+        monotonicity_verified_on_samples=True,
+        verification_probe_intensities=tuple(probe_intensities),
+        right_censored=False,
+        search_max_intensity=max_intensity,
     )
