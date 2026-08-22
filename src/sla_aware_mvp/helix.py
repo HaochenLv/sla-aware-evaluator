@@ -4,7 +4,7 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-from .domain import Pipeline, RequestSpec
+from .domain import Pipeline, RequestSpec, Stage
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,11 @@ class HelixA100Llama2Profiler:
     Prompt uses request input tokens. Decode uses active decode-token batch size.
     HELIX does not observe context length or mixed prefill/decode interference;
     those arguments are intentionally ignored rather than fabricated.
+
+    Stage-level methods expose the same measured per-layer service demand for the
+    independent reference evaluator. Pipeline-level methods are exact sums of the
+    stage-level values, so adding this interface does not change Conservative
+    Evaluator semantics.
     """
 
     prompt: HelixLayerProfile
@@ -113,12 +118,38 @@ class HelixA100Llama2Profiler:
             if stage.num_layers > 12:
                 raise ValueError("HELIX metadata allows at most 12 LLaMA-2 layers per A100")
 
-    def prefill_time(
-        self, request: RequestSpec, pipeline: Pipeline, n_prefill: int, n_decode: int
+    def prefill_stage_time(
+        self,
+        request: RequestSpec,
+        pipeline: Pipeline,
+        stage: Stage,
+        n_prefill: int,
+        n_decode: int,
     ) -> float:
         self._validate_pipeline(pipeline)
         per_layer = self.prompt.lookup_seconds_per_layer(request.input_tokens)
-        return sum(per_layer * stage.num_layers for stage in pipeline.stages)
+        return per_layer * stage.num_layers
+
+    def prefill_time(
+        self, request: RequestSpec, pipeline: Pipeline, n_prefill: int, n_decode: int
+    ) -> float:
+        return sum(
+            self.prefill_stage_time(request, pipeline, stage, n_prefill, n_decode)
+            for stage in pipeline.stages
+        )
+
+    def decode_stage_time_per_token(
+        self,
+        request: RequestSpec,
+        context_tokens: int,
+        pipeline: Pipeline,
+        stage: Stage,
+        n_prefill: int,
+        n_decode: int,
+    ) -> float:
+        self._validate_pipeline(pipeline)
+        per_layer = self.decode.lookup_seconds_per_layer(max(n_decode, 1))
+        return per_layer * stage.num_layers
 
     def decode_time_per_token(
         self,
@@ -128,7 +159,14 @@ class HelixA100Llama2Profiler:
         n_prefill: int,
         n_decode: int,
     ) -> float:
-        self._validate_pipeline(pipeline)
-        per_layer = self.decode.lookup_seconds_per_layer(max(n_decode, 1))
-        return sum(per_layer * stage.num_layers for stage in pipeline.stages)
-
+        return sum(
+            self.decode_stage_time_per_token(
+                request,
+                context_tokens,
+                pipeline,
+                stage,
+                n_prefill,
+                n_decode,
+            )
+            for stage in pipeline.stages
+        )
