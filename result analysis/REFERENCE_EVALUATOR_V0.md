@@ -92,15 +92,34 @@ decode_stage_time_per_token(...)
 
 The existing pipeline-level Conservative methods remain unchanged in meaning and are sums of the stage-level values.
 
-## 7. Capacity search
+## 7. Capacity search and right censoring
 
 `find_reference_capacity()` uses the same workload-intensity scaling and sampled monotonicity discipline as the Conservative capacity search.
 
 Matching the numerical search policy is intentional; the serving evaluator itself remains independent.
 
-If sampled safe re-entry is observed, the scalar-capacity assumption must be revisited rather than hidden.
+The first 30-second smoke attempt exposed an important finite-workload case: the Conservative evaluator remained feasible through the configured `max_intensity=16`, so the old search raised `no unsafe intensity found below max_intensity` before Reference execution began.
 
-## 8. First experiment: smoke test only
+That is now treated as a valid **right-censored** observation, not as an exception. If the evaluated search limit is still feasible, both capacity APIs return:
+
+```text
+safe_intensity = max_intensity
+unsafe_intensity = null
+right_censored = true
+representative_unsafe_run = null
+```
+
+Its interpretation is:
+
+```text
+C >= max_intensity
+```
+
+The code does not fabricate an unsafe point or change the workload merely to force a bracket. The smoke harness continues to the other evaluator even when one side is right-censored.
+
+If a true safe/unsafe frontier is observed, the original bracket + sampled monotonicity + local refinement behavior is unchanged. If sampled safe re-entry is observed after an unsafe point, the scalar-capacity assumption must still be revisited rather than hidden.
+
+## 8. First experiment: execution smoke test only
 
 Run:
 
@@ -116,21 +135,25 @@ The smoke experiment uses:
 - HELIX LLaMA-2 70B / A100 profile;
 - the existing Slow/Fast two-pipeline control;
 - a 30-second generated Azure-derived finite workload;
-- identical SLA and underlying compute data for both evaluators.
+- identical SLA and underlying compute data for both evaluators;
+- `max_intensity=16`, with explicit right-censoring if the frontier is not observed.
 
-It reports Conservative and Reference capacity brackets side by side plus Reference TTFT/TPOT/memory/first-violation diagnostics and evaluator wall time.
+It reports Conservative and Reference capacity bounds side by side plus Reference TTFT/TPOT/memory/first-violation diagnostics and evaluator wall time.
 
 Two pipelines are **not** enough to validate ranking correlation. This run only asks:
 
 1. Does Reference v0 execute and drain correctly?
 2. Does explicit service produce sensible TTFT/TPOT violations?
-3. Does Slow/Fast ordering agree or disagree in this minimal case?
-4. Is runtime acceptable before scaling to ~24 pipelines?
+3. If both sides expose an ordering within the observed range, do Slow/Fast agree or disagree?
+4. Is runtime acceptable before scaling to a larger pipeline set?
 5. Does sampled feasibility remain monotonic under the reference microbatch model?
+6. Does the harness correctly preserve right-censored capacity results instead of failing?
+
+A censored 30-second capacity is not a reason to tune the workload. A later ranking-capacity experiment may use a longer workload, such as the already exercised 120-second trace, if an observed frontier is needed.
 
 ## 9. Do not do yet
 
-Before the smoke result is reviewed, do not add:
+Before the repaired smoke result is reviewed, do not add:
 
 - deployment search;
 - replicas;
@@ -142,4 +165,4 @@ Before the smoke result is reviewed, do not add:
 - large topology sweeps;
 - 24-pipeline rank-correlation experiments.
 
-The next branch decision should be based on the smoke result, not on adding more simulator features.
+The next branch decision should be based on the repaired smoke result, not on adding more simulator features.
