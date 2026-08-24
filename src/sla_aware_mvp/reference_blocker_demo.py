@@ -5,10 +5,16 @@ import json
 from .domain import SLA
 from .helix import HelixA100Llama2Profiler
 from .helix_demo import HELIX_COMMIT, artifact_root, build_helix_pipelines
-from .reference import evaluate_reference, find_reference_capacity
+from .reference import evaluate_reference
 from .reference_queue_blocker_diagnostics import diagnose_gpu_queue_blockers
-from .reference_round import evaluate_reference_round, find_reference_capacity_round
+from .reference_round import evaluate_reference_round
 from .workload import build_helix_azure_conversation_workload
+
+
+# Exact first-unsafe intensity reproduced by E4 for both Slow/Fast and both v0/
+# Decode-round under this fixed 30 s workload/SLA. Reusing it avoids repeating
+# capacity search inside an observational diagnostic.
+E4_UNSAFE_INTENSITY = 0.026041666666666664
 
 
 def _diag_dict(diag) -> dict:
@@ -66,46 +72,26 @@ def main() -> None:
         "experiment": "GPU queue blocker phase attribution",
         "helix_commit": HELIX_COMMIT,
         "workload_requests": len(workload),
+        "intensity_source": "E4 exact first-unsafe bracket upper bound",
+        "unsafe_intensity": E4_UNSAFE_INTENSITY,
         "pipelines": {},
     }
 
     for pipeline in build_helix_pipelines():
         per_pipeline = {}
-        for name, evaluator, finder in (
-            ("reference_v0", evaluate_reference, find_reference_capacity),
-            (
-                "reference_decode_round",
-                evaluate_reference_round,
-                find_reference_capacity_round,
-            ),
+        for name, evaluator in (
+            ("reference_v0", evaluate_reference),
+            ("reference_decode_round", evaluate_reference_round),
         ):
-            capacity = finder(
-                pipeline=pipeline,
-                workload=workload,
-                sla=sla,
-                profiler=profiler,
-                tolerance=0.02,
-                max_intensity=16.0,
-                verification_grid_points=9,
-            )
-            if capacity.unsafe_intensity is None:
-                per_pipeline[name] = {
-                    "unsafe_intensity": None,
-                    "diagnostic": None,
-                }
-                continue
             diagnostic, _ = diagnose_gpu_queue_blockers(
                 evaluator=evaluator,
                 pipeline=pipeline,
                 workload=workload,
                 sla=sla,
                 profiler=profiler,
-                intensity=capacity.unsafe_intensity,
+                intensity=E4_UNSAFE_INTENSITY,
             )
-            per_pipeline[name] = {
-                "unsafe_intensity": capacity.unsafe_intensity,
-                "diagnostic": _diag_dict(diagnostic),
-            }
+            per_pipeline[name] = _diag_dict(diagnostic)
         output["pipelines"][pipeline.id] = per_pipeline
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
