@@ -21,6 +21,15 @@ PROFILED_PREFILL_COMPUTE_S = {
     1024: 0.64768,
 }
 
+# Independent E10 tracer observation: total HELIX compute-node batch service
+# containing the one Prefill blocker. This was not an input to E22 calibration.
+E10_MEASURED_PREFILL_SERVICE_S = {
+    64: 0.04473487359999993,
+    256: 0.17893949439999973,
+    512: 0.3540389887999998,
+    1024: 0.7080779775999996,
+}
+
 # pipeline, prompt_tokens, decode-relative arrival offset, measured Decode queue.
 # E10 has no Decode service inflation in these controlled one-Prefill cases.
 E10 = (
@@ -129,6 +138,21 @@ def main() -> None:
     e10_rows = [row for row in rows if row["case"].startswith("E10-")]
     e11_rows = [row for row in rows if row["case"].startswith("E11-")]
 
+    service_transfer = []
+    for tokens, measured in E10_MEASURED_PREFILL_SERVICE_S.items():
+        predicted = debt((tokens,), include_overhead=True)
+        service_transfer.append(
+            {
+                "prompt_tokens": tokens,
+                "profiled_compute_s": PROFILED_PREFILL_COMPUTE_S[tokens],
+                "e22_predicted_overhead_s": E22_OVERHEAD_S_PER_TOKEN * tokens,
+                "predicted_prefill_service_s": predicted,
+                "e10_measured_prefill_service_s": measured,
+                "absolute_error_s": predicted - measured,
+                "relative_error": (predicted - measured) / measured,
+            }
+        )
+
     result = {
         "design": {
             "purpose": "test whether a profiled Prefill service debt (compute + independently calibrated runtime overhead) covers HELIX Prefill-induced Decode compute-side excess",
@@ -138,6 +162,10 @@ def main() -> None:
             "overhead_calibration_source": "E22 / E20 isolated aligned-TTFT thresholds",
             "overhead_midpoint_us_per_token": E22_OVERHEAD_S_PER_TOKEN * 1e6,
             "overhead_fitted_to_interference_cases": False,
+        },
+        "independent_prefill_service_transfer": {
+            "cases": service_transfer,
+            "max_abs_relative_error": max(abs(row["relative_error"]) for row in service_transfer),
         },
         "compute_only": {
             "cases": len(rows),
@@ -163,7 +191,7 @@ def main() -> None:
             "e11_service_debt_violations": sum(not row["service_debt_bound_holds"] for row in e11_rows),
             "e11_max_service_ratio": max(row["excess_to_service_debt_ratio"] for row in e11_rows),
         },
-        "interpretation_guardrail": "This is cross-experiment consistency evidence, not a universal proof. The E22 overhead coefficient was inferred independently from isolated Prefill threshold measurements and was not fitted to E10/E11 queue/interference observations. The result supports moving Prefill runtime overhead into the profiling/service-debt interface rather than modifying the network red-line or fitting a HELIX-specific interference coefficient.",
+        "interpretation_guardrail": "This is cross-experiment consistency evidence, not a universal proof. The E22 overhead coefficient was inferred independently from isolated Prefill threshold measurements and was not fitted to E10/E11 queue/interference observations. It also predicts the independently observed E10 Prefill compute-node service to within about 0.06%, strengthening the profiling/service-time interpretation. The result supports moving Prefill runtime overhead into the profiling/service-debt interface rather than modifying the network red-line or fitting a HELIX-specific interference coefficient.",
         "rows": rows,
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
