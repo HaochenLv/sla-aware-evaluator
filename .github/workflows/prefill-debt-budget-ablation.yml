@@ -6,7 +6,10 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-24.04
+    # Infrastructure-only fallback: recent ubuntu-24.04 jobs failed before any
+    # workflow step started. Use the older GitHub-hosted image to test whether
+    # this is an image/runner allocation issue; experiment semantics are unchanged.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
