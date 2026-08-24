@@ -8,6 +8,7 @@ from dataclasses import dataclass
 # This is an offline analysis only: no HELIX runtime or Conservative Evaluator
 # semantics are changed.
 BASELINE_DECODE_LAYER_SERVICE_S = 0.11205898239999991
+MATERIAL_SERVICE_INFLATION_S = 0.001
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ def analyze(case: Case) -> dict:
         "decode_layer_service_s": case.decode_layer_service_s,
         "baseline_decode_layer_service_s": BASELINE_DECODE_LAYER_SERVICE_S,
         "decode_service_inflation_s": service_inflation_s,
+        "material_decode_service_inflation": service_inflation_s > MATERIAL_SERVICE_INFLATION_S,
         "total_decode_compute_excess_s": total_compute_excess_s,
         "full_active_prefill_debt_ub_s": case.full_prefill_debt_ub_s,
         "excess_to_debt_ratio": ratio,
@@ -58,7 +60,7 @@ def analyze(case: Case) -> dict:
 def main() -> None:
     rows = [analyze(case) for case in CASES]
     worst = max(rows, key=lambda row: row["excess_to_debt_ratio"])
-    inflated = [row for row in rows if row["decode_service_inflation_s"] > 1e-9]
+    material_inflation = [row for row in rows if row["material_decode_service_inflation"]]
     result = {
         "design": {
             "purpose": "test whether full active-Prefill compute debt upper-bounds total Decode compute-side excess, not only queue wait",
@@ -67,12 +69,13 @@ def main() -> None:
             "new_simulator_or_scheduler": False,
             "total_excess_definition": "GPU queue wait + max(0, Decode layer service - isolated Decode layer service)",
             "candidate_debt": "sum(full profiled pipeline compute time of active Prefills)",
+            "material_service_inflation_threshold_s": MATERIAL_SERVICE_INFLATION_S,
             "network_excluded": True,
         },
         "summary": {
             "cases": len(rows),
             "bound_violations": sum(not row["bound_holds"] for row in rows),
-            "service_inflation_cases": len(inflated),
+            "material_service_inflation_cases": len(material_inflation),
             "max_excess_to_debt_ratio": worst["excess_to_debt_ratio"],
             "worst_case": {
                 "pipeline": worst["pipeline"],
@@ -80,7 +83,7 @@ def main() -> None:
             },
             "all_bounds_hold": all(row["bound_holds"] for row in rows),
         },
-        "service_inflation_cases": inflated,
+        "material_service_inflation_cases": material_inflation,
         "cases": rows,
         "interpretation_guardrail": "E10 already showed zero Decode service inflation in all 32 one-Prefill cases, so its queue-bound result is also a total-excess bound there. Combining that prior fact with this E11 re-analysis gives 44/44 controlled cases with no observed violation; this remains empirical HELIX-relative evidence, not a universal proof.",
     }
