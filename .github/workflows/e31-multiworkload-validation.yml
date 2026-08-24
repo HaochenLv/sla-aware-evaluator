@@ -1,0 +1,50 @@
+name: E31 Multi-Workload Validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: seed3
+            seed: 3
+            offset: 0
+          - label: seed11
+            seed: 11
+            offset: 0
+          - label: seed19
+            seed: 19
+            offset: 0
+          - label: seed7_offset200
+            seed: 7
+            offset: 200
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Validate E31 candidate on workload variant
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          VALIDATION_SEED: ${{ matrix.seed }}
+          VALIDATION_OFFSET: ${{ matrix.offset }}
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.e31_multiworkload_validation > outputs/e31-multiworkload-${{ matrix.label }}.json
+          cat outputs/e31-multiworkload-${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e31-multiworkload-${{ matrix.label }}
+          path: outputs/e31-multiworkload-${{ matrix.label }}.json
