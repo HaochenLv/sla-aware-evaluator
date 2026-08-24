@@ -1,19 +1,19 @@
 # Project Status
 
 ## Current state
-- Conservative Evaluator remains unchanged on the validated base; HELIX fixed-pipeline Reference remains draft PR #6 and is not ground truth.
-- Diagnostic PRs #8–#15 are research-only; do not merge.
-- Best current candidate remains: exact HELIX singleton Decode profile alignment + full active-Prefill compute debt. It is a screening-bound candidate, not yet a production revision.
+- Conservative Evaluator remains unchanged; HELIX fixed-pipeline Reference remains draft PR #6 and is a relative execution reference, not ground truth.
+- This branch is a historical research-only E24 ablation. It does not change state progression, HELIX scheduling, or the normalized-cost network red-line equation.
+- IMPORTANT: E24 uses the older **compute-only Prefill debt** and is no longer the preferred magnitude candidate after the corrected E23/E26 result.
 
 ## Experiment log
-- **E7**: original Conservative capacity was far above HELIX despite the same fixed Pipeline/workload/SLA.
-- **E9–E11**: HELIX diagnostics establish real Prefill→Decode queue/interference. One-/multi-Prefill controlled tests support full active Prefill compute as a simple conservative interference-debt candidate.
-- **E12–E14**: full-Prefill debt alone rejects too late; unconditional 2× Decode is an artifact; the exact HELIX singleton Decode rule is semantically necessary but insufficient by itself.
-- **E15 / exact singleton + active-Prefill debt**: original seed-7 workload gives candidate safe 0.0131 / unsafe 0.0132; HELIX safe frontiers are Slow 0.0134 and Fast 0.0136. Candidate is slightly conservative but ties Slow/Fast.
-- **E16 / four additional workload variants**: three length-seed variants plus one different arrival window (41 requests) all keep the candidate conservative at its predicted frontier. Across 8 pipeline×workload checks, HELIX is feasible at every candidate-unsafe edge (8/8), so no candidate optimism was observed. At 5% above the candidate-unsafe edge, HELIX is already TPOT-unsafe in 6/8 checks; the two exceptions are seed11-Fast and seed19-Slow. Candidate safe/unsafe request-rate brackets are about 0.00983–0.00989 rps (seed3), 0.01002–0.01008 (seed11), 0.00983–0.00989 (seed19), and 0.01204–0.01218 (offset200).
+- **E15–E16 baseline**: guard-only exact-singleton + full active-Prefill compute debt stayed conservative across tested workload variants, but repeatedly tied Slow/Fast.
+- **E23 correction / E26**: compute-only Prefill debt covers 42/44 controlled E10/E11 cases, not 44/44. The preferred magnitude candidate is now blocking-service debt = profiled compute + independently profiled/bounded blocking overhead, which covers 44/44 archived cases.
+- **E24 setup**: the branch demonstrates the mathematically consistent placement of a Prefill debt inside `Delta_D = tau_D - T_decode - I_prefill - T_queue - T_fix`, so the unchanged network red line sees the reduced Decode time budget. This structural idea remains relevant, but the branch's compute-only `I_prefill` input is obsolete as a final candidate.
+- **E24 execution status**: Actions run `32700730311` failed before any workflow step (`steps=null`, no job log). No E24 frontier/result is claimed.
+- **E25/E28 timing result**: immediate full-debt charging creates an overlap-onset cliff, and archived E10 timing sweeps show actual exposure is stage/execution-phase sensitive rather than monotone in a simple timing offset.
 
 ## Interpretation
-E16 strengthens the case that the simple Prefill-debt formulation is useful as a conservative screening bound: it stayed on the safe side of HELIX across all tested variants and was usually within a 5% intensity increase of a HELIX TPOT failure. However, it ties Slow/Fast in every tested workload because current Conservative progress is compute-driven and bandwidth affects red-line feasibility but not phase timing. HELIX can separate the pipelines through bandwidth-dependent timing; seed19 even has Slow safe and Fast unsafe at the same +5% probe, showing that strict max-TPOT ranking on a finite trace can be phase-sensitive rather than monotonically ordered by link speed. Some HELIX runs are aligned-TTFT feasible while true first-token TTFT exceeds 2 s (e.g. seed11/seed19 Slow), so external TTFT semantics remain a separate issue.
+Two pieces should be kept separate. The **structural placement** of interference inside Decode's remaining SLA budget is still correct for the current modeling logic. The **magnitude input** used by this historical E24 branch is not: compute-only debt misses 2/44 controlled cases. A successor ablation, if run, must use Prefill blocking-service debt and remain opt-in. E28 also warns that replacing full debt with a naive monotone timing heuristic is not justified.
 
 ## Next
-Do not integrate E15 yet and do not add a scheduler. First isolate the network-timing/ranking question with a controlled bandwidth-only experiment across several trace offsets: determine whether HELIX Slow/Fast ordering is itself stable and how often phase shifts change the strict max-TPOT boundary. This decides whether the Evaluator should target conservative screening/robust capacity rather than exact single-trace fine ranking. Keep the network red-line equations unchanged during this diagnostic.
+Do not spend runner time re-validating this obsolete compute-only branch as a candidate. Keep it as provenance for the `Delta_D` integration structure. Any successor should use the E26 blocking-service debt and compare full scheduler-free worst-case exposure against only a separately justified event-level refinement. Do not merge.
