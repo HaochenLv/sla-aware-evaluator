@@ -26,8 +26,14 @@ jobs:
           mkdir -p outputs
           PYTHONPATH=src python -m sla_aware_mvp.reference_round_demo > outputs/reference_round_30s.json
           python -m json.tool outputs/reference_round_30s.json > /dev/null
+      - name: Run GPU queue blocker attribution
+        run: |
+          PYTHONPATH=src python -m sla_aware_mvp.reference_blocker_demo > outputs/reference_gpu_blockers_30s.json
+          python -m json.tool outputs/reference_gpu_blockers_30s.json > /dev/null
       - name: Upload result
         uses: actions/upload-artifact@v4
         with:
           name: reference-round-validation
-          path: outputs/reference_round_30s.json
+          path: |
+            outputs/reference_round_30s.json
+            outputs/reference_gpu_blockers_30s.json
