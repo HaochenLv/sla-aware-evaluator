@@ -2,7 +2,7 @@
 
 ## Current state
 - Conservative Evaluator default remains unchanged; HELIX fixed-pipeline Reference remains draft PR #6 and is a relative execution reference, not ground truth.
-- E31 remains the leading scheduler-free candidate, but E44 produced a genuine candidate-optimism counterexample under a moderate request-size shift. E45 now localizes that failure to an omitted intrinsic Prefill service overhead in the Evaluator's own TTFT accounting, not cross-request queueing and not the network red-line.
+- E31 remains the baseline scheduler-free candidate. E44 produced a genuine TTFT-side optimism counterexample; E45 localized it to omitted intrinsic Prefill service overhead; E46 now closes that specific counterexample with a research-only TTFT candidate while leaving the production Evaluator and network red-line unchanged.
 
 ## Experiment log
 - **E31/E34**: candidate-safe points were HELIX-safe in all 8 workload×pipeline checks, but E39 showed finite-trace HELIX feasibility can be nonmonotone in intensity; earlier binary-search “exact frontier” language is therefore invalid.
@@ -16,12 +16,16 @@
 - **E45 component decomposition**: Evaluator profile compute=`1.136320 s`; ideal internal-network service=`0.752720282 s`; fixed=`0.005 s`, leaving `0.105959718 s` TTFT margin. HELIX isolated compute+queue=`1.257292902 s`, i.e. `0.120972902 s` above profile compute. HELIX network exceeds ideal-network algebra by only `0.000091893 s` (`0.092 ms`). Thus almost the entire optimism comes from omitted intrinsic Prefill compute-node service overhead, not network mismatch.
 - **E45 stage localization**: on each of the 8 ten-layer stages, profile pure compute is `0.142040 s`, while isolated HELIX compute-node residence is `0.157161613 s`, an extra `0.015121613 s` per stage. Summed over 8 stages this is `0.120972902 s`. No overlapping requests are observed on any target stage.
 - **E45 source-mechanism match**: the per-stage `15.121613 ms` gap matches the pinned HELIX CPU-buffer service for this Prefill (`activation_bytes × (1/4 GB/s + 1/5 GB/s)`), giving the known exact aggregate coefficient `58.9824 us/token` across 8 stages and `~0.120973 s` for 2051 tokens. The independently calibrated E22 midpoint predicts `0.121782655 s`, only about `0.000810 s` above the observed intrinsic overhead. E22 was already used when charging Prefill blocking debt to Decode, but unchanged E31 did not charge the same intrinsic Prefill overhead to the Prefill request's own TTFT budget.
+- **E46 Prefill TTFT overhead candidate**: Actions run `32721921916` completed successfully. The research-only candidate adds the E22-style Prefill intrinsic service-overhead term to Prefill's own TTFT compute-side accounting, charges it exactly once, and leaves the network red-line plus Decode blocking semantics unchanged.
+- **E46 counterexample result**: unchanged E31 remains feasible at seed7 Slow, request-size `1.2×`, intensity `0.0109`; the E46 candidate becomes infeasible at the target arrival. `azure-00008` has base profile compute `1.136320 s`, intrinsic overhead `0.121782655 s`, ideal internal-network service `0.752720282 s`, leaving only `0.736897345 s` for network. Ideal network exceeds the remaining budget by `0.015822937 s`, so E46 triggers a network red-line violation (`required=319210117.45 B/s > 312500000 B/s`). Pinned HELIX is also unsafe with aligned TTFT `2.015105077 s > 2.0 s`; TPOT remains safe at `0.117426029 s`. Thus `dangerous_optimism=false` and `counterexample_closed=true` for this point.
 
 ## Judgment
-E45 explains the E44 counterexample cleanly. The failure is not evidence that the network red-line or the overall conservative-envelope idea is broken. Instead, E31 is asymmetric: it recognizes Prefill service overhead when estimating how Prefill can block Decode, but omits that overhead when deciding whether Prefill itself fits inside TTFT. At 2051 prompt tokens the omitted term is about `121 ms`; the Evaluator had only about `106 ms` residual TTFT margin, producing the observed `15.1 ms` optimism. This is a specific modeling omission with a plausible existing profiled/bounded term, not a reason to add a global safety factor.
+E46 passes the first required falsification test: it closes the exact E44 TTFT optimism case by adding a mechanism already independently identified in E22/E45, not by applying a global safety factor. The numerical margin is consistent: the candidate's missing-network budget is about `15.823 ms`, while HELIX exceeds TTFT by about `15.105 ms`. This is strong evidence that the omitted Prefill intrinsic service overhead was the causal modeling gap for this counterexample.
+
+This does **not** yet establish that E46 is the final Evaluator rule. Adding a nonnegative TTFT cost can only shrink the candidate feasible set, so the next risk is over-conservatism. E46 must be checked against earlier candidate-safe workloads and against prompt lengths within the validated reference range before adoption.
 
 ## Next
-1. Build a research-only candidate that charges a profiled/bounded Prefill intrinsic service-overhead term in the Prefill TTFT budget, reusing the E22-style provenance rather than hard-coding HELIX CPU-buffer constants as universal theory.
-2. First test only the E44 counterexample: the fix must make seed7 Slow `1.2×`, intensity `0.0109` unsafe/conservative without changing the network red-line.
-3. Then rerun the earlier candidate-safe points to check that the TTFT fix removes optimism without excessive new false rejection.
-4. Keep unchanged E31 as baseline/provenance; no merge and no main modification.
+1. Rerun the earlier E31 candidate-safe points under E46 and compare capacity-edge movement; primary question is whether the TTFT fix causes excessive false rejection.
+2. Add a prompt-length sanity check at or below `2048` tokens to keep the key TTFT mechanism test inside the HELIX paper's validated prompt-length envelope.
+3. Keep the E22-style overhead represented as profiled/bounded hardware/software-stack cost rather than a universal hard-coded HELIX constant.
+4. Keep production Evaluator unchanged; no merge and no main modification.
