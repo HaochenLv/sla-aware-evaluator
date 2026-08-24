@@ -25,7 +25,7 @@ jobs:
           MPLBACKEND: Agg
         run: |
           mkdir -p outputs
-          PYTHONPATH=src python -m sla_aware_mvp.e44_ttft_counterexample_diagnostic > outputs/e44-ttft-counterexample-diagnostic.json
+          PYTHONPATH=src python -m sla_aware_mvp.e44_ttft_counterexample_diagnostic_runner > outputs/e44-ttft-counterexample-diagnostic.json
           cat outputs/e44-ttft-counterexample-diagnostic.json
       - uses: actions/upload-artifact@v4
         with:
