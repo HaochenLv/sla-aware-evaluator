@@ -1,0 +1,56 @@
+name: HELIX Queue Overlap Diagnostic
+
+on:
+  push:
+    branches:
+      - exp/helix-queue-overlap-diagnostic
+  pull_request:
+    branches:
+      - feat/helix-fixed-pipeline-reference
+  workflow_dispatch:
+
+jobs:
+  queue-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pipeline: helix-slow-link-placement
+            label: slow-safe-00134
+            intensity: '0.0134'
+          - pipeline: helix-slow-link-placement
+            label: slow-unsafe-00136
+            intensity: '0.0136'
+          - pipeline: helix-fast-link-placement
+            label: fast-safe-00136
+            intensity: '0.0136'
+          - pipeline: helix-fast-link-placement
+            label: fast-unsafe-00138
+            intensity: '0.0138'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Run queue diagnostic
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+          DIAG_PIPELINE: ${{ matrix.pipeline }}
+          DIAG_INTENSITY: ${{ matrix.intensity }}
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.helix_queue_diagnostic > outputs/${{ matrix.label }}.json
+          cat outputs/${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: queue-diagnostic-${{ matrix.label }}
+          path: outputs/${{ matrix.label }}.json
