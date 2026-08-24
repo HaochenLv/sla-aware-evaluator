@@ -25,7 +25,7 @@ jobs:
           MPLBACKEND: Agg
         run: |
           mkdir -p outputs
-          PYTHONPATH=src python -m sla_aware_mvp.seed19_tightness_diagnostic > outputs/e31-seed19-tightness-diagnostic.json
+          PYTHONPATH=src python -m sla_aware_mvp.seed19_tightness_diagnostic_fast > outputs/e31-seed19-tightness-diagnostic.json
           cat outputs/e31-seed19-tightness-diagnostic.json
       - uses: actions/upload-artifact@v4
         with:
