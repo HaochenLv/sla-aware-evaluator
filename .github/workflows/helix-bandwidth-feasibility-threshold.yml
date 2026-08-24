@@ -1,7 +1,6 @@
 name: HELIX Bandwidth Feasibility Threshold
 
 on:
-  pull_request:
   workflow_dispatch:
 
 jobs:
