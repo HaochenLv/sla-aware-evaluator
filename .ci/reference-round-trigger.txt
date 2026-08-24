@@ -1,0 +1,1 @@
+Trigger PR-scoped validation for Reference Decode-round. No research-model change.
