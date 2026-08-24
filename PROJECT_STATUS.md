@@ -2,24 +2,20 @@
 
 ## Current state
 - Conservative Evaluator default remains unchanged; HELIX fixed-pipeline Reference remains draft PR #6 and is a relative execution reference, not ground truth.
-- E31 remains the leading scheduler-free safety candidate. E39 is rejected; E40 is a direct phase-jitter safety stress test of unchanged E31.
+- E31 remains the leading scheduler-free safety candidate. E39 is rejected; E40 directly stress-tests unchanged E31 against arrival-phase variation.
 
 ## Experiment log
-- **E31/E34 pointwise safety evidence**: previously tested candidate-safe points were HELIX-safe in all 8 workload×pipeline checks. E39 showed finite-trace HELIX feasibility is not globally monotone in intensity, so these are pointwise safety checks rather than proof of one unique HELIX frontier.
-- **E36/E37**: seed19 Slow conservatism combines hidden phase-dependent Prefill exposure and trajectory mismatch. Cheap event/request observables cannot uniquely determine exposure.
-- **E38**: accumulating 5 ms fixed overhead as physical time on each Decode token contributes 2.075 s over the 415-token victim and can create a false overlap, but simply removing it over-corrects relative to HELIX.
-- **E39 rejected**: split progression/accounting semantics moves the candidate to 0.0159 safe but creates Slow optimism: HELIX is TPOT-unsafe at that candidate-safe point. E39 also exposes nonmonotone HELIX safe/unsafe pockets under finite-trace intensity scaling.
-- **E40 setup**: keep original E31 unchanged at seed19 Slow candidate-safe intensity `0.0152`. Jitter only `azure-00010` arrival from `-120 ms` to `+120 ms` in `10 ms` steps (25 cases). For every phase perturbation compare E31 feasibility with pinned HELIX.
-- **E40 result**: `24/25` cases are `both_safe`; `1/25` is `candidate_conservative` (E31 unsafe while HELIX safe); `0/25` are `candidate_optimism`; HELIX is unsafe in `0/25` cases. Maximum HELIX TPOT over the full jitter grid is `0.1174260288 s < 0.150 s`.
-- **E40 conservative case**: at jitter `-120 ms`, E31 sees an Arrival-triggered `N_P=1,N_D=1` overlap and charges full Prefill blocking-service debt `0.126587275 s`, giving required compute-side time `0.243587275 s > 0.150 s`; HELIX remains safe with max TPOT `0.117426029 s`.
+- **E31/E34**: prior candidate-safe checks were HELIX-safe in all tested workload×pipeline points, but E39 showed HELIX finite-trace feasibility is nonmonotone in intensity, so binary-search “exact frontier” claims are invalid.
+- **E36–E38**: seed19 Slow conservatism comes from hidden phase-dependent Prefill exposure plus trajectory mismatch. Cheap request/event state cannot determine exposure; simply separating fixed SLA overhead from physical progression over-corrects.
+- **E39 rejected**: split semantics makes seed19 Slow candidate-safe at `0.0159` while HELIX is already TPOT-unsafe (`0.168847 s > 0.150 s`).
+- **E40 setup**: keep original E31 at seed19 Slow candidate-safe intensity `0.0152`; jitter only `azure-00010` arrival from `-120 ms` to `+120 ms` in `10 ms` steps (25 cases).
+- **E40 result**: `24/25` cases are both safe; `1/25` is candidate-conservative; `0/25` are candidate-optimistic; HELIX is unsafe in `0/25`. Maximum HELIX TPOT is `0.117426029 s < 0.150 s`.
+- **E40 conservative case**: jitter `-120 ms` creates an E31 `N_P=1,N_D=1` Arrival overlap; full Prefill debt is `0.126587275 s`, so required time becomes `0.243587275 s > 0.150 s`, while HELIX remains safe.
 
-## Interpretation
-E40 is positive safety evidence for the original E31 envelope on the diagnosed seed19 Slow safe point. Across a ±120 ms phase perturbation of the known interfering request, no case was found where E31 stayed safe while HELIX violated TPOT. The only disagreement is in the conservative direction. This supports the intended scheduler-free worst-case role of full Prefill blocking-service debt against local arrival-phase variation.
-
-The result is not a proof of universal safety: it covers one workload, one pipeline, one base intensity, one known interferer, and a ±120 ms jitter window. Because HELIX feasibility is phase-sensitive and nonmonotone in intensity, validation should continue with broader phase/prefix stress rather than relying on a single binary-search frontier.
+## Judgment
+E40 is positive local safety evidence for E31: within ±120 ms phase perturbation of the known seed19 interferer, no `E31 safe / HELIX unsafe` counterexample appears. The only mismatch is conservative. This supports the scheduler-free worst-case envelope, but is not universal proof because it covers one workload, one pipeline, one base intensity, one interferer, and one jitter window.
 
 ## Next
-1. Extend the phase-jitter/prefix safety audit to the remaining E34 workload×pipeline candidate-safe points, prioritizing seed11 Fast and the other Slow/Fast cases.
-2. Search for any `candidate safe / HELIX unsafe` counterexample; reject any tightening rule immediately if one appears.
-3. Keep E31 unchanged as the safety baseline; do not revive E39 split semantics.
-4. Do not merge and do not modify main.
+1. Extend the same phase/prefix safety stress to remaining E34 candidate-safe workload×pipeline points.
+2. Prioritize searching for any `candidate safe / HELIX unsafe` counterexample; reject tightening rules if found.
+3. Keep E31 unchanged; do not merge and do not modify main.
