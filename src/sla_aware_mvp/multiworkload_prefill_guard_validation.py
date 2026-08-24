@@ -57,16 +57,14 @@ def _helix_probe(*, intensity, pipeline, workload, sla, root):
         sla=sla,
         helix_root=root,
     )
+    metrics = tuple(run.query_metrics.values())
     return {
         "intensity": intensity,
         "feasible": run.feasible,
         "violation_kind": run.first_violation_kind,
-        "max_aligned_ttft_s": max(item.aligned_ttft_s for item in run.query_metrics),
-        "max_true_ttft_s": max(item.true_first_token_ttft_s for item in run.query_metrics),
-        "max_tpot_s": max(
-            (max(item.decode_tpot_s) if item.decode_tpot_s else 0.0)
-            for item in run.query_metrics
-        ),
+        "max_aligned_ttft_s": max(item.aligned_ttft_s for item in metrics),
+        "max_true_ttft_s": max(item.true_first_token_ttft_s for item in metrics),
+        "max_tpot_s": max(item.max_tpot_s for item in metrics),
     }
 
 
