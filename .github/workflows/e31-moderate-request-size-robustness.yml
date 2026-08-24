@@ -1,0 +1,51 @@
+name: E31 Moderate Request-Size Robustness
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: seed7_slow
+            workload: seed7
+            pipeline: helix-slow-link-placement
+          - label: seed7_fast
+            workload: seed7
+            pipeline: helix-fast-link-placement
+          - label: seed19_slow
+            workload: seed19
+            pipeline: helix-slow-link-placement
+          - label: seed19_fast
+            workload: seed19
+            pipeline: helix-fast-link-placement
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Test unchanged E31 under moderate request-size shifts
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+          VALIDATION_LABEL: ${{ matrix.workload }}
+          PIPELINE_ID: ${{ matrix.pipeline }}
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.e31_moderate_request_size_robustness > outputs/e31-request-size-${{ matrix.label }}.json
+          cat outputs/e31-request-size-${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e31-request-size-${{ matrix.label }}
+          path: outputs/e31-request-size-${{ matrix.label }}.json
