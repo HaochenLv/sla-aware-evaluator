@@ -4,21 +4,20 @@ import json
 import os
 from pathlib import Path
 
+from .capacity import scale_workload
 from .domain import SLA
 from .exact_singleton_decode_demo import ExactHelixDecodeRuntimeProfiler
 from .exact_singleton_prefill_guard_demo import _frontier, _trial
 from .helix import HelixA100Llama2Profiler
 from .helix_demo import HELIX_COMMIT, build_helix_pipelines
-from .helix_fixed_capacity import find_helix_fixed_capacity
+from .helix_fixed_reference import evaluate_helix_fixed_reference
 from .workload import build_helix_azure_conversation_workload
 
 
 CANDIDATE_START = 0.008
 CANDIDATE_STOP = 0.025
 CANDIDATE_STEP = 0.0001
-HELIX_TOLERANCE = 0.0001
-HELIX_INITIAL_INTENSITY = 0.013
-HELIX_MAX_INTENSITY = 0.10
+BUFFER_FACTOR = 1.05
 
 
 def _percentile(values: list[int], q: float) -> int:
@@ -51,17 +50,32 @@ def _workload_stats(workload):
     }
 
 
-def _relation(candidate_frontier, helix_result):
-    cand_safe = candidate_frontier["safe_intensity_lower_bound"]
-    cand_unsafe = candidate_frontier["unsafe_intensity_upper_bound"]
-    helix_safe = helix_result.safe_intensity
-    helix_unsafe = helix_result.unsafe_intensity
+def _helix_probe(*, intensity, pipeline, workload, sla, root):
+    run = evaluate_helix_fixed_reference(
+        pipeline=pipeline,
+        workload=scale_workload(workload, intensity),
+        sla=sla,
+        helix_root=root,
+    )
+    return {
+        "intensity": intensity,
+        "feasible": run.feasible,
+        "violation_kind": run.first_violation_kind,
+        "max_aligned_ttft_s": max(item.aligned_ttft_s for item in run.query_metrics),
+        "max_true_ttft_s": max(item.true_first_token_ttft_s for item in run.query_metrics),
+        "max_tpot_s": max(
+            (max(item.decode_tpot_s) if item.decode_tpot_s else 0.0)
+            for item in run.query_metrics
+        ),
+    }
 
-    if cand_unsafe is not None and cand_unsafe <= helix_safe + 1e-12:
-        return "candidate_frontier_left_of_known_helix_safe"
-    if helix_unsafe is not None and cand_safe is not None and cand_safe >= helix_unsafe - 1e-12:
+
+def _classification(*, candidate_safe_probe, candidate_unsafe_probe):
+    if not candidate_safe_probe["feasible"]:
         return "observed_candidate_optimism"
-    return "frontier_brackets_overlap_or_are_inconclusive"
+    if candidate_unsafe_probe["feasible"]:
+        return "candidate_conservative_at_its_frontier"
+    return "candidate_and_helix_frontiers_overlap_within_one_candidate_grid_step"
 
 
 def main() -> None:
@@ -96,14 +110,14 @@ def main() -> None:
         "design": {
             "purpose": "validate exact singleton Decode + full active-Prefill debt across workload variants",
             "candidate_grid": [CANDIDATE_START, CANDIDATE_STOP, CANDIDATE_STEP],
-            "helix_capacity_search": {
-                "initial_intensity": HELIX_INITIAL_INTENSITY,
-                "tolerance": HELIX_TOLERANCE,
-                "max_intensity": HELIX_MAX_INTENSITY,
-            },
+            "helix_probe_policy": "probe candidate safe edge, candidate unsafe edge, and 5% above unsafe edge",
             "seed": seed,
             "interval_offset": interval_offset,
-            "sla": {"ttft_s": sla.ttft_s, "tpot_s": sla.tpot_s, "fixed_overhead_s": sla.fixed_overhead_s},
+            "sla": {
+                "ttft_s": sla.ttft_s,
+                "tpot_s": sla.tpot_s,
+                "fixed_overhead_s": sla.fixed_overhead_s,
+            },
         },
         "workload": stats,
         "pipelines": {},
@@ -121,78 +135,67 @@ def main() -> None:
             for intensity in candidate_intensities
         ]
         candidate_frontier = _frontier(candidate_trials)
-        candidate_frontier["safe_arrival_rate_lower_bound_rps"] = (
-            candidate_frontier["safe_intensity_lower_bound"] * base_rate
-            if candidate_frontier["safe_intensity_lower_bound"] is not None
-            else None
-        )
-        candidate_frontier["unsafe_arrival_rate_upper_bound_rps"] = (
-            candidate_frontier["unsafe_intensity_upper_bound"] * base_rate
-            if candidate_frontier["unsafe_intensity_upper_bound"] is not None
-            else None
-        )
+        safe_intensity = candidate_frontier["safe_intensity_lower_bound"]
+        unsafe_intensity = candidate_frontier["unsafe_intensity_upper_bound"]
+        if safe_intensity is None or unsafe_intensity is None:
+            raise RuntimeError("candidate frontier not bracketed by validation grid")
 
-        helix = find_helix_fixed_capacity(
+        candidate_frontier["safe_arrival_rate_lower_bound_rps"] = safe_intensity * base_rate
+        candidate_frontier["unsafe_arrival_rate_upper_bound_rps"] = unsafe_intensity * base_rate
+
+        buffer_intensity = unsafe_intensity * BUFFER_FACTOR
+        helix_safe_edge = _helix_probe(
+            intensity=safe_intensity,
             pipeline=pipeline,
             workload=workload,
             sla=sla,
-            helix_root=root,
-            initial_intensity=HELIX_INITIAL_INTENSITY,
-            tolerance=HELIX_TOLERANCE,
-            max_intensity=HELIX_MAX_INTENSITY,
+            root=root,
         )
-        helix_summary = {
-            "safe_intensity_lower_bound": helix.safe_intensity,
-            "unsafe_intensity_upper_bound": helix.unsafe_intensity,
-            "safe_arrival_rate_lower_bound_rps": helix.safe_intensity * base_rate,
-            "unsafe_arrival_rate_upper_bound_rps": (
-                helix.unsafe_intensity * base_rate if helix.unsafe_intensity is not None else None
-            ),
-            "right_censored": helix.right_censored,
-            "trials": [
-                {
-                    "intensity": trial.intensity,
-                    "feasible": trial.feasible,
-                    "violation_kind": trial.violation_kind,
-                }
-                for trial in helix.trials
-            ],
-        }
+        helix_unsafe_edge = _helix_probe(
+            intensity=unsafe_intensity,
+            pipeline=pipeline,
+            workload=workload,
+            sla=sla,
+            root=root,
+        )
+        helix_buffer = _helix_probe(
+            intensity=buffer_intensity,
+            pipeline=pipeline,
+            workload=workload,
+            sla=sla,
+            root=root,
+        )
 
-        cand_safe = candidate_frontier["safe_intensity_lower_bound"]
-        gap = helix.safe_intensity - cand_safe if cand_safe is not None else None
         result["pipelines"][pipeline.id] = {
             "candidate": candidate_frontier,
-            "helix": helix_summary,
+            "helix_probes": {
+                "at_candidate_safe": helix_safe_edge,
+                "at_candidate_unsafe": helix_unsafe_edge,
+                "at_5pct_above_candidate_unsafe": helix_buffer,
+            },
             "comparison": {
-                "relation": _relation(candidate_frontier, helix),
-                "safe_intensity_gap_helix_minus_candidate": gap,
-                "candidate_to_helix_safe_ratio": (
-                    cand_safe / helix.safe_intensity
-                    if cand_safe is not None and helix.safe_intensity > 0
-                    else None
+                "classification": _classification(
+                    candidate_safe_probe=helix_safe_edge,
+                    candidate_unsafe_probe=helix_unsafe_edge,
                 ),
+                "candidate_unsafe_to_buffer_span": buffer_intensity - unsafe_intensity,
+                "buffer_is_still_helix_safe": helix_buffer["feasible"],
             },
         }
 
     pipeline_items = list(result["pipelines"].items())
     if len(pipeline_items) == 2:
         (_, first), (_, second) = pipeline_items
+        first_safe = first["candidate"]["safe_intensity_lower_bound"]
+        second_safe = second["candidate"]["safe_intensity_lower_bound"]
         result["pairwise"] = {
             "candidate_safe_order": (
-                "first>second"
-                if first["candidate"]["safe_intensity_lower_bound"] > second["candidate"]["safe_intensity_lower_bound"]
-                else "first<second"
-                if first["candidate"]["safe_intensity_lower_bound"] < second["candidate"]["safe_intensity_lower_bound"]
-                else "tie"
+                "first>second" if first_safe > second_safe else "first<second" if first_safe < second_safe else "tie"
             ),
-            "helix_safe_order": (
-                "first>second"
-                if first["helix"]["safe_intensity_lower_bound"] > second["helix"]["safe_intensity_lower_bound"]
-                else "first<second"
-                if first["helix"]["safe_intensity_lower_bound"] < second["helix"]["safe_intensity_lower_bound"]
-                else "tie"
-            ),
+            "helix_at_candidate_unsafe": {
+                "first_feasible": first["helix_probes"]["at_candidate_unsafe"]["feasible"],
+                "second_feasible": second["helix_probes"]["at_candidate_unsafe"]["feasible"],
+            },
         }
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
