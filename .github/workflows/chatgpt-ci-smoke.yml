@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - chore/chatgpt-ci-smoke-20260824
+  pull_request:
   workflow_dispatch:
 
 jobs:
