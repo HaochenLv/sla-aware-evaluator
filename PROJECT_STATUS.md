@@ -10,7 +10,7 @@
 ## Experiment log
 - **E6 / HELIX fixed-pipeline integration**: smoke + unit/regression CI PASS; no new serving simulator/scheduler was implemented.
 - **E7 / 30 s, 17-request capacity**: Conservative Slow = 1.2031 rps safe (1.2211 unsafe); Fast >= 10.3434 rps (right-censored). HELIX Reference Slow capacity is in [0.008663, 0.008792) rps; Fast is in [0.008792, 0.008921) rps. Fast > Slow is resolved pairwise.
-- **E8 / Reference validity check**: HELIX authors validate simulator fidelity against their vLLM/ZeroMQ prototype. Relative throughput is strong, but absolute latency has ~150 ms systematic error. Therefore E7 ranking evidence is usable; E7 absolute every-token TPOT capacity is provisional and must not be treated as ground truth yet.
+- **E8 / Reference metric semantics**: HELIX represents each Decode token as one `RequestPhase.Increment` request. The next Decode iteration is issued exactly when the previous iteration reaches the sink, so an Increment's source-to-sink latency equals that query's token-to-token interval. Thus the extracted Decode iteration latency is semantically valid for strong per-token TPOT. However, current `aligned_ttft` is Prefill completion, while true TTFT is first Decode completion. HELIX's documented ~150 ms simulator/prototype latency gap also prevents treating absolute 150 ms TPOT capacity as ground truth.
 
 ## Next
-Verify that the latency quantity extracted from HELIX corresponds exactly to our per-token TPOT definition, and determine how the documented ~150 ms simulator/prototype latency gap should be handled. Do not modify Conservative or add simulator complexity before this semantic check.
+Keep HELIX as a relative execution reference. Before modifying Conservative, separate two questions: (1) use true first-token TTFT for external validation; (2) test ranking/relative-capacity behavior under HELIX rather than interpreting E7 absolute capacity as real-system ground truth. Do not add simulator complexity.
