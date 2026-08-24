@@ -2,24 +2,23 @@
 
 ## Current state
 - Conservative Evaluator default remains unchanged; HELIX fixed-pipeline Reference remains draft PR #6 and is a relative execution reference, not ground truth.
-- E31 is a research-only successor to historical E24. It preserves the existing Conservative event trajectory and normalized-cost network red-line equation.
-- Candidate under test is **Prefill blocking-service debt**, not obsolete compute-only debt.
+- Current candidate keeps the original event trajectory and network red-line, but charges profiled Prefill blocking-service debt inside Decode's SLA remaining-time budget.
+- No scheduler, routing, replica, or production Evaluator semantic change has been merged.
 
 ## Experiment log
-- **E23 correction / E26**: compute-only Prefill debt covers 42/44 controlled E10/E11 cases; blocking-service debt = profiler compute + independently calibrated E22 blocking overhead covers 44/44. E22 reconstructs independent E10 measured Prefill service within `0.05710%` maximum relative error.
-- **E25/E28–E30**: immediate full-debt charging creates a coarse overlap-onset cliff, but simple global tightening is not supported. Hidden execution phase can consume `95.3143%` of full blocking-service debt, and even the largest archived-compatible constant slack (`32.995 ms`) does not remove any E25 cliff.
-- **E31 setup**: reuse the budget-consistent structural placement from E24 but replace its magnitude with `I_blocking = sum(T_P^compute,profile + h_P * L_in)` using the E22 midpoint `h_P = 59.377209 us/token` on the same validated 8-stage HELIX configuration. Decode budget becomes `Delta_D = tau_D - T_decode - I_blocking - T_queue - T_fix`. Existing Prefill network commitments, event progression, and network red-line formula are unchanged.
-- **E31 execution**: after the repository was made public, rerun `32704649314` completed successfully and uploaded artifact `9512219265`.
-- **E31 frontier**: for both Slow and Fast fixed pipelines, candidate safe intensity is `0.0131` and first unsafe intensity is `0.0132` on the `0.0001` grid. With base arrival rate `0.6464646465 rps`, this is a safe lower bound `0.0084686869 rps` and unsafe upper bound `0.0085333333 rps`.
-- **E31 first unsafe mechanism**: both pipelines first fail at the same `N_P=1, N_D=1` state. Decode compute is `0.112 s`, profiled blocking-service debt is `0.7490756231 s`, and fixed overhead is `0.005 s`, so required compute-side time is `0.8660756231 s > 0.150 s` TPOT. The old no-debt network residual was `0.033 s`; after debt it becomes negative (`-0.7160756231 s`). The first violation is therefore an interpretable `sla_time` exhaustion, not a mysterious network-only failure.
-- **E31 HELIX probes**: at candidate safe `0.0131`, HELIX is feasible for both pipelines. At candidate first-unsafe `0.0132`, HELIX is still feasible for both pipelines (`max TPOT` Slow `0.117426 s`, Fast `0.117151 s`). At `0.01386` (5% above candidate unsafe), HELIX violates TPOT for both pipelines (Slow `1.084347 s`, Fast `0.825945 s`). Thus the candidate is conservative on this workload, but the exact HELIX frontier remains only bracketed above the candidate; E31 does not yet quantify the tightest gap.
-- **E31 guardrail**: the E22 coefficient is experiment-local provenance for this 8-stage configuration. It is not a universal runtime constant; E27 must still validate transfer across stage count before any generic interface claim.
+- **E23/E26 magnitude**: compute-only Prefill debt covers 42/44 controlled E10/E11 cases; blocking-service debt covers 44/44. Independently calibrated E22 overhead reconstructs E10 Prefill compute-node service within `0.05710%` maximum relative error.
+- **E27 transfer**: stage-additive Prefill blocking overhead was tested directly on 7/8/10 stages × 256/512/1024 prompts. All 9/9 cases closely match; max absolute relative error is `0.0698798%`, including held-out 7- and 10-stage configurations. This supports a stage-local profiling interface within the pinned HELIX configuration, not a universal coefficient.
+- **E31 seed-7 baseline**: candidate frontier is `0.0131` safe / `0.0132` unsafe for both fixed pipelines. Candidate-safe is HELIX-safe; HELIX is still safe at candidate first-unsafe and unsafe by `0.01386` (+5%). First candidate violation is interpretable `sla_time` exhaustion at `N_P=1, N_D=1`, not a network-only artifact.
+- **E34 multi-workload validation**: held-out workloads seed3, seed11, seed19, and seed7 offset200 completed for both fixed pipelines (8 pipeline×workload checks). Candidate frontiers are: seed3 `0.0152/0.0153`, seed11 `0.0155/0.0156`, seed19 `0.0152/0.0153`, seed7 offset200 `0.0087/0.0088` (safe/first-unsafe intensity).
+- **E34 safety result**: candidate-safe point is HELIX-safe in **8/8** checks; no observed optimism. Candidate first-unsafe point is still HELIX-safe in **8/8**, confirming systematic conservatism at the coarse overlap-onset frontier.
+- **E34 +5% probe**: HELIX is unsafe in **6/8** checks and still safe in 2/8 (seed11 Fast, seed19 Slow). Thus the candidate is conservative but generally within a small workload-dependent margin of an observed HELIX failure; exact frontier tightness is not yet quantified.
+- **E33 frontier refinement**: direct HELIX refinement for the original seed-7 workload is currently running on branch `exp/e31-helix-frontier-refinement` / draft PR #36.
 
 ## Interpretation
-E31 closes the first end-to-end loop for the current candidate: independently supported Prefill blocking-service debt can be inserted into Decode's remaining SLA budget while preserving the original event trajectory and network red-line logic. The resulting candidate is conservative against the pinned HELIX reference on the tested seed-7 workload: its `0.0131` safe point is HELIX-safe, while HELIX remains safe at the candidate's `0.0132` first-unsafe point and becomes unsafe by `0.01386`. This is evidence for safety, not yet evidence for a tight capacity estimate. The remaining important questions are frontier tightness across multiple workloads and transfer of the blocking-overhead profile across stage counts.
+The current evidence now separates three issues cleanly. (1) The blocking-service debt magnitude has direct controlled support. (2) Its profiling overhead transfers across tested stage counts as a stage-local term. (3) When inserted into the original Decode SLA budget, the resulting capacity candidate remains conservative across four workload variants and two fixed pipelines, with 0/8 observed optimism. The remaining weakness is tightness: the coarse scheduler-free state creates an overlap-onset cliff, so candidate first-unsafe occurs before HELIX actually violates SLA. E28–E30 already show that simple global discounts/slacks are not defensible fixes.
 
 ## Next
-1. Refine the HELIX frontier between `0.0132` and `0.01386` for Slow/Fast to quantify E31 conservatism on this workload.
-2. Repeat E31 on multiple workload seeds/windows to test for optimism or pathological over-conservatism.
-3. Run E27 stage-count transfer (7/8/10 stages) now that hosted Actions is working again.
-Do not merge and do not change the default Evaluator semantics yet.
+1. Finish E33 and quantify the exact HELIX frontier gap for the original seed-7 workload.
+2. If E33 confirms a modest but systematic gap, run one focused frontier-refinement experiment on the two E34 cases where +5% remained HELIX-safe (seed11 Fast, seed19 Slow) to measure the worst observed conservatism.
+3. Keep the full blocking-service envelope as the leading scheduler-free candidate unless an additional cheap event-level state variable is independently justified.
+Do not merge and do not change default Evaluator semantics yet.
