@@ -12,6 +12,9 @@ DECODE_COMPUTE_S = 0.112
 # E16 source: workflow run 32690886932, four multiworkload artifacts.
 # Slow/Fast have identical candidate first-unsafe states for every workload, so
 # each row below is a workload-level observation replicated across both pipelines.
+# NOTE: E15/E16 used the earlier compute-only Prefill debt candidate. E25 audits
+# the frontier mechanism of that candidate only; it is not a magnitude-validation
+# experiment. E23/E26 later corrected the magnitude interpretation.
 OBSERVATIONS = (
     {
         "workload": "seed7-offset0",
@@ -72,7 +75,7 @@ def main() -> None:
             "evaluator_semantics_changed": False,
             "source_runs": [32689929342, 32690886932],
             "pipelines": ["helix-slow-link-placement", "helix-fast-link-placement"],
-            "candidate": "exact singleton Decode + full active-Prefill compute debt",
+            "candidate": "E15/E16 historical candidate: exact singleton Decode + full active-Prefill compute debt",
         },
         "base_decode_budget": {
             "tpot_s": TPOT_S,
@@ -95,7 +98,7 @@ def main() -> None:
             ),
             "frontier_mechanism": "discrete Prefill+Decode overlap onset, not a near-zero residual-budget crossing",
         },
-        "interpretation_guardrail": "This audit does not show that the unit full-Prefill debt is wrong: E23 found it upper-bounds measured total Decode compute-side excess in all 44 controlled HELIX cases, with a worst observed ratio 0.953687. It shows a different limitation: applying the full debt immediately to every active Decode makes the finite-workload capacity frontier coarse and phase-triggered. Any refinement should target when/how much debt is exposed to a Decode, not fit a global discount coefficient below one.",
+        "interpretation_guardrail": "E25 is a timing/frontier-mechanism audit, not a magnitude-validity result. Corrected E23/E26 show that profiler-only Prefill compute covers 42/44 controlled interference cases, while independently profiled overhead-inclusive Prefill blocking-service debt covers 44/44. E25 still shows that even the smaller historical compute-only debt creates a coarse overlap-onset cliff when charged immediately; charging the larger blocking-service debt immediately would not solve that timing problem. Do not fit a global discount coefficient to conflate magnitude and exposure timing.",
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
