@@ -14,8 +14,11 @@ from .helix_fixed_reference import evaluate_helix_fixed_reference
 from .prefill_debt_budget_ablation import _budget_trial
 from .workload import build_helix_azure_conversation_workload
 
-START = 0.005
-STOP = 0.022
+# E44 request-size shifts can move the conservative prefix edge materially.
+# This wider interval is a diagnostic search window only; it does not alter
+# workload timing, SLA, candidate semantics, or the HELIX reference.
+START = 0.001
+STOP = 0.040
 STEP = 0.0001
 SIZE_SCALES = (0.8, 1.2)
 WORKLOADS = {
