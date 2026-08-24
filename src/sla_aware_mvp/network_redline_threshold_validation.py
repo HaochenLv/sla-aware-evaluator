@@ -13,9 +13,9 @@ from .helix_fixed_reference import evaluate_helix_fixed_reference
 
 
 PROMPT_TOKENS = (512, 1024, 1536, 1821)
-LOWER_GBPS = 0.5
+LOWER_GBPS = 0.1
 UPPER_GBPS = 4.0
-BISECTION_STEPS = 9
+BISECTION_STEPS = 10
 
 
 def evaluator_threshold_gbps(
