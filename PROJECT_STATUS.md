@@ -4,13 +4,12 @@
 - Conservative Evaluator: stabilized; unchanged.
 - Hand-written Reference schedulers: frozen; no longer the validation path.
 - Current branch: `feat/helix-fixed-pipeline-reference`; draft PR #6 is open and must not be merged yet.
-- Reference now reuses HELIX public simulator with an externally fixed Layer-Level pipeline; HELIX placement/max-flow optimization is not used.
+- Reference reuses pinned HELIX public runtime with an externally fixed Layer-Level pipeline; HELIX placement/max-flow optimization is not used.
 
 ## Experiment log
-- **E0-E4 / old Reference**: rebuilding serving scheduling materially changed capacity, so that direction was rejected.
-- **E5 / HELIX interface study**: fixed pipeline injection is feasible; HELIX already provides execution, network service, profiling, and latency history.
-- **E6 / fixed-pipeline smoke**: integration CI PASS. Two requests complete on both Slow/Fast; Fast has lower TTFT/TPOT than Slow. The adapter is mechanically connected to pinned HELIX. Added a small arrival-rate capacity wrapper; unit/regression CI also passes.
-- **E7 / 30 s capacity comparison**: currently executing the same 17-request Azure-derived workload under Conservative and HELIX Reference; this is intentionally slower because HELIX explicitly simulates layer-level serving execution.
+- **E6 / HELIX fixed-pipeline integration**: smoke + unit/regression CI PASS; no new serving simulator/scheduler was implemented.
+- **E7 / 30 s, 17-request capacity**: Conservative Slow = 1.2031 rps safe (1.2211 unsafe); Fast >= 10.3434 rps (right-censored). HELIX Reference Slow capacity is in [0.008663, 0.008792) rps; Fast is in [0.008792, 0.008921) rps. Fast > Slow is therefore resolved pairwise.
+- Under this strict every-token TPOT criterion, Conservative is not conservative relative to HELIX Reference: Slow overestimates by about 137-139x; Fast by at least 1159x. HELIX transitions abruptly from max TPOT ~0.117 s to large TPOT violations when one request overlap appears.
 
 ## Next
-Inspect E7 capacity bounds. If HELIX capacity is stable and Slow/Fast ordering is sensible, use this Reference for small-scale validation of Conservative request-rate estimates; do not build another simulator.
+Do not add simulator complexity. Inspect the single overlap/TPOT jump and verify whether the current strict all-token SLA capacity criterion is the intended validation target. Then decide whether Conservative needs a simple queue/interference guard or should be positioned as a ranking/screening proxy rather than a hard capacity bound.
