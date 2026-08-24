@@ -8,7 +8,7 @@ from .capacity import scale_workload
 from .domain import EvaluatorConfig, Phase, RequestRuntime, SLA
 from .evaluator import _network_bytes_by_link, evaluate
 from .exact_singleton_decode_demo import ExactHelixDecodeRuntimeProfiler
-from .exact_singleton_prefill_guard_demo import _frontier, _trial as guard_only_trial
+from .exact_singleton_prefill_guard_demo import _frontier, _trial as historical_guard_only_trial
 from .helix import HelixA100Llama2Profiler
 from .helix_demo import HELIX_COMMIT, build_helix_pipelines
 from .helix_fixed_reference import evaluate_helix_fixed_reference
@@ -19,6 +19,11 @@ START_INTENSITY = 0.010
 STOP_INTENSITY = 0.020
 STEP_INTENSITY = 0.0001
 BUFFER_FACTOR = 1.05
+
+# E22 midpoint inferred independently from isolated aligned-TTFT bandwidth
+# thresholds on the same 8-stage HELIX configuration. This is intentionally an
+# experiment-local input, not a production hard-coded runtime constant.
+E22_BLOCKING_OVERHEAD_S_PER_TOKEN = 59.37720874470879e-6
 
 
 def _decode_link_contribution(*, request, pipeline, remaining_s: float):
@@ -44,6 +49,12 @@ def _decode_link_contribution(*, request, pipeline, remaining_s: float):
     return result
 
 
+def _prefill_blocking_service_s(*, request, pipeline, profiler, n_prefill, n_decode):
+    compute_s = profiler.prefill_time(request, pipeline, n_prefill, n_decode)
+    overhead_s = E22_BLOCKING_OVERHEAD_S_PER_TOKEN * request.input_tokens
+    return compute_s + overhead_s
+
+
 def _budget_consistent_violation(*, snapshot, request_by_id, pipeline, profiler, sla):
     prefill_ids = [
         rid for rid, phase in snapshot.request_phase.items() if phase == Phase.PREFILL.value
@@ -57,7 +68,13 @@ def _budget_consistent_violation(*, snapshot, request_by_id, pipeline, profiler,
     n_prefill = len(prefill_ids)
     n_decode = len(decode_ids)
     prefill_debt_s = sum(
-        profiler.prefill_time(request_by_id[rid], pipeline, n_prefill, n_decode)
+        _prefill_blocking_service_s(
+            request=request_by_id[rid],
+            pipeline=pipeline,
+            profiler=profiler,
+            n_prefill=n_prefill,
+            n_decode=n_decode,
+        )
         for rid in prefill_ids
     )
 
@@ -76,7 +93,7 @@ def _budget_consistent_violation(*, snapshot, request_by_id, pipeline, profiler,
         record = {
             "request_id": rid,
             "decode_compute_s": decode_s,
-            "prefill_debt_s": prefill_debt_s,
+            "prefill_blocking_service_debt_s": prefill_debt_s,
             "old_remaining_network_budget_s": old_remaining_s,
             "new_remaining_network_budget_s": new_remaining_s,
         }
@@ -89,7 +106,10 @@ def _budget_consistent_violation(*, snapshot, request_by_id, pipeline, profiler,
                 "num_prefill": n_prefill,
                 "num_decode": n_decode,
                 **record,
-                "required_compute_side_s": decode_s + prefill_debt_s + sla.queue_overhead_s + sla.fixed_overhead_s,
+                "required_compute_side_s": decode_s
+                + prefill_debt_s
+                + sla.queue_overhead_s
+                + sla.fixed_overhead_s,
                 "capacity_s": sla.tpot_s,
             }
 
@@ -115,7 +135,7 @@ def _budget_consistent_violation(*, snapshot, request_by_id, pipeline, profiler,
                 "capacity_bytes_per_s": capacity,
                 "num_prefill": n_prefill,
                 "num_decode": n_decode,
-                "prefill_debt_s": prefill_debt_s,
+                "prefill_blocking_service_debt_s": prefill_debt_s,
                 "tightest_decode": tightest_decode,
             }
     return None
@@ -206,12 +226,15 @@ def main() -> None:
 
     result = {
         "design": {
-            "purpose": "compare guard-only Prefill debt with budget-consistent debt inside Decode Delta while preserving the unchanged Conservative trajectory",
+            "purpose": "test budget-consistent Prefill blocking-service debt inside Decode Delta while preserving the unchanged Conservative trajectory",
             "decode_rule": "exact HELIX singleton Decode profile alignment",
-            "candidate_debt": "sum(full profiled compute of all active Prefills)",
-            "budget_formula": "Delta_D=tau_D-T_decode-I_prefill-T_queue-T_fix",
+            "candidate_debt": "sum(profiler Prefill compute + E22 independently calibrated blocking overhead) for all active Prefills",
+            "e22_blocking_overhead_s_per_token": E22_BLOCKING_OVERHEAD_S_PER_TOKEN,
+            "budget_formula": "Delta_D=tau_D-T_decode-I_blocking-T_queue-T_fix",
             "network_redline_changed": False,
             "state_progression_changed": False,
+            "production_evaluator_changed": False,
+            "historical_guard_baseline_warning": "guard-only comparison uses the older compute-only E15 candidate and is provenance-only",
             "grid": [START_INTENSITY, STOP_INTENSITY, STEP_INTENSITY],
             "base_arrival_rate_rps": base_rate,
         },
@@ -219,8 +242,8 @@ def main() -> None:
     }
 
     for pipeline in build_helix_pipelines():
-        guard_trials = [
-            guard_only_trial(
+        historical_guard_trials = [
+            historical_guard_only_trial(
                 intensity=value,
                 pipeline=pipeline,
                 workload=workload,
@@ -239,9 +262,9 @@ def main() -> None:
             )
             for value in intensities
         ]
-        guard_frontier = _frontier(guard_trials)
+        historical_guard_frontier = _frontier(historical_guard_trials)
         budget_frontier = _frontier(budget_trials)
-        for frontier in (guard_frontier, budget_frontier):
+        for frontier in (historical_guard_frontier, budget_frontier):
             if frontier["safe_intensity_lower_bound"] is not None:
                 frontier["safe_arrival_rate_lower_bound_rps"] = (
                     frontier["safe_intensity_lower_bound"] * base_rate
@@ -272,16 +295,9 @@ def main() -> None:
             }
 
         result["pipelines"][pipeline.id] = {
-            "guard_only_frontier": guard_frontier,
-            "budget_consistent_frontier": budget_frontier,
+            "historical_compute_guard_only_frontier": historical_guard_frontier,
+            "blocking_service_budget_frontier": budget_frontier,
             "helix_probes": helix_probes,
-            "budget_minus_guard_safe_intensity": (
-                budget_frontier["safe_intensity_lower_bound"]
-                - guard_frontier["safe_intensity_lower_bound"]
-                if budget_frontier["safe_intensity_lower_bound"] is not None
-                and guard_frontier["safe_intensity_lower_bound"] is not None
-                else None
-            ),
         }
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
