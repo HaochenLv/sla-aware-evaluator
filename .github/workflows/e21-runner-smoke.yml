@@ -1,0 +1,12 @@
+name: E21 Runner Smoke
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/e21-runner-smoke.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "runner-ok"
