@@ -1,1 +1,0 @@
-Temporary CI-only branch note: this branch is used to isolate E20 network-threshold validation from inherited heavy diagnostic workflows. Do not merge.
