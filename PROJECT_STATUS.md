@@ -2,13 +2,14 @@
 
 ## Current state
 - Conservative Evaluator: stabilized; unchanged.
-- Hand-written Reference schedulers: frozen; they became too complex and are no longer the target validation path.
-- New branch: `feat/helix-fixed-pipeline-reference`.
-- Validation target: reuse HELIX public event simulator/runtime with an externally fixed Layer-Level pipeline; HELIX placement/max-flow optimization must not participate.
+- Hand-written Reference schedulers: frozen; no longer the validation path.
+- Current branch: `feat/helix-fixed-pipeline-reference`.
+- New Reference path: thin adapter around HELIX public simulator with externally fixed Layer-Level pipeline; no HELIX placement/max-flow optimization.
 
 ## Experiment log
-- **E0-E4 / old Reference**: explicit simulation worked, but scheduler details materially changed capacity, showing that rebuilding a serving simulator is the wrong direction.
-- **E5 / HELIX interface study**: feasible with a thin adapter. HELIX requests already support a preset `PipelineStage` list; later Decode iterations copy the same pipeline. HELIX also exposes its FIFO mixed Prefill/Decode `execution_policy` and request/query latency histories. Fixed layer placement can be loaded directly; no placement optimization is required.
+- **E0-E4 / old Reference**: scheduler details materially changed capacity; rebuilding a serving simulator was rejected.
+- **E5 / HELIX interface study**: fixed pipeline injection is feasible; HELIX already provides runtime execution, network service, profiling, and latency history.
+- **E6 / adapter implementation**: added fixed-route wrapper, fixed layer loading, finite workload replay, aligned/true TTFT extraction, TPOT extraction, and a two-request Slow/Fast smoke. Unit tests cover direct-route validation and metric semantics. GPU execution still calls HELIX `execution_policy`; no new serving simulator is implemented.
 
 ## Next
-Build only a thin fixed-pipeline replay adapter around HELIX: fixed route injection + fixed layer loading + finite workload replay + TTFT/TPOT extraction + request-rate feasibility search. Do not implement a new scheduler or simulator.
+Run pinned HELIX integration CI. If the two-request fixed-pipeline smoke passes, add only a small request-rate feasibility/capacity-search wrapper and compare HELIX Reference capacity with Conservative capacity on the same 30 s Slow/Fast workload.
