@@ -2,18 +2,18 @@
 
 ## Current state
 - Conservative Evaluator remains unchanged; HELIX fixed-pipeline Reference remains draft PR #6 and is a relative execution reference, not ground truth.
-- This branch is a research-only E24 ablation. It does not change state progression, HELIX scheduling, or the normalized-cost network red-line equation.
-- Candidate under test: exact HELIX singleton Decode alignment + full active-Prefill interference debt placed inside Decode's remaining SLA/network budget.
+- This branch is a historical research-only E24 ablation. It does not change state progression, HELIX scheduling, or the normalized-cost network red-line equation.
+- IMPORTANT: E24 uses the older **compute-only Prefill debt** and is no longer the preferred magnitude candidate after the corrected E23/E26 result.
 
 ## Experiment log
-- **E15–E16 baseline**: guard-only exact-singleton + full active-Prefill debt stayed conservative across tested workload variants, but repeatedly tied Slow/Fast.
-- **E23 magnitude check**: full active-Prefill debt upper-bounds measured total Decode compute-side excess in 44/44 controlled HELIX cases; worst observed excess/debt ratio is `0.953687`, so a global multiplier below 1 is not supported.
-- **E24 setup**: added an offline budget-consistent replay using `Delta_D = tau_D - T_decode - I_prefill - T_queue - T_fix`. It preserves the existing Conservative trajectory and snapshot Prefill network commitments, replacing only each active Decode's network contribution with the smaller debt-aware remaining budget. The script compares the resulting frontier with the earlier guard-only frontier and is prepared to probe pinned HELIX at its safe/unsafe edges.
-- **E24 execution status**: Actions run `32700730311` failed before any workflow step started (`steps=null`, no job log). Therefore no E24 frontier/result is claimed. This is the same runner-infrastructure blocker affecting E21, not an experimental failure.
-- **E25 related audit**: archived successful E15/E16 artifacts show every guard-only first-unsafe state is `N_P=1, N_D=1`; exact-singleton Decode + fixed overhead leaves only `0.033 s` TPOT budget, while the first active Prefill debt is `0.11584–0.68192 s`. Thus the guard-only frontier is already a discrete overlap-onset cliff rather than a marginal budget crossing.
+- **E15–E16 baseline**: guard-only exact-singleton + full active-Prefill compute debt stayed conservative across tested workload variants, but repeatedly tied Slow/Fast.
+- **E23 correction / E26**: compute-only Prefill debt covers 42/44 controlled E10/E11 cases, not 44/44. The preferred magnitude candidate is now blocking-service debt = profiled compute + independently profiled/bounded blocking overhead, which covers 44/44 archived cases.
+- **E24 setup**: the branch demonstrates the mathematically consistent placement of a Prefill debt inside `Delta_D = tau_D - T_decode - I_prefill - T_queue - T_fix`, so the unchanged network red line sees the reduced Decode time budget. This structural idea remains relevant, but the branch's compute-only `I_prefill` input is obsolete as a final candidate.
+- **E24 execution status**: Actions run `32700730311` failed before any workflow step (`steps=null`, no job log). No E24 frontier/result is claimed.
+- **E25/E28 timing result**: immediate full-debt charging creates an overlap-onset cliff, and archived E10 timing sweeps show actual exposure is stage/execution-phase sensitive rather than monotone in a simple timing offset.
 
 ## Interpretation
-E24 remains useful because placing interference debt inside `Delta_D` is the mathematically consistent way to let the unchanged SLA-to-network red line see compute-side interference. However, E25 implies E24 can only differ from the guard-only frontier if debt-aware network reservation rejects a state that is still compute-time-feasible under the guard. We cannot say whether that happens until the workflow actually executes. Do not infer a result from the model structure alone.
+Two pieces should be kept separate. The **structural placement** of interference inside Decode's remaining SLA budget is still correct for the current modeling logic. The **magnitude input** used by this historical E24 branch is not: compute-only debt misses 2/44 controlled cases. A successor ablation, if run, must use Prefill blocking-service debt and remain opt-in. E28 also warns that replacing full debt with a naive monotone timing heuristic is not justified.
 
 ## Next
-Keep E24 pending and re-run when Actions runners recover. In parallel, investigate the more fundamental coarseness identified by E25: whether a simple remaining-Prefill exposure bound can preserve the conservative magnitude evidence of E23 without charging an entire Prefill immediately at the first overlap event. Do not fit a global debt discount and do not reconstruct a scheduler.
+Do not spend runner time re-validating this obsolete compute-only branch as a candidate. Keep it as provenance for the `Delta_D` integration structure. Any successor should use the E26 blocking-service debt and compare full scheduler-free worst-case exposure against only a separately justified event-level refinement. Do not merge.
