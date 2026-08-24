@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+import os
 from pathlib import Path
 
 from .capacity import scale_workload
 from .domain import EvaluatorConfig, Phase, SLA
 from .evaluator import evaluate
 from .helix import HelixA100Llama2Profiler
-from .helix_demo import HELIX_COMMIT, artifact_root, build_helix_pipelines
+from .helix_demo import HELIX_COMMIT, build_helix_pipelines
 from .workload import build_helix_azure_conversation_workload
 
 
@@ -130,7 +130,10 @@ def _scan_pipeline(*, pipeline, workload, profiler, sla):
 
 
 def main() -> None:
-    root = artifact_root()
+    root_env = os.environ.get("HELIX_ROOT")
+    if not root_env:
+        raise RuntimeError("set HELIX_ROOT to the pinned HELIX checkout")
+    root = Path(root_env)
     profiler = HelixA100Llama2Profiler.from_artifact(root, commit=HELIX_COMMIT)
     workload_sample = build_helix_azure_conversation_workload(
         root,
