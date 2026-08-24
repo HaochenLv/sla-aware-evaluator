@@ -1,0 +1,27 @@
+name: ChatGPT CI Smoke
+
+on:
+  push:
+    branches:
+      - chore/chatgpt-ci-smoke-20260824
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run full unit test suite
+        run: PYTHONPATH=src python -m unittest discover -s tests -v
+      - name: Run Reference smoke
+        run: |
+          mkdir -p outputs
+          time PYTHONPATH=src python -m sla_aware_mvp.reference_demo > outputs/reference_v0_chatgpt_ci.json
+          python -m json.tool outputs/reference_v0_chatgpt_ci.json > /dev/null
