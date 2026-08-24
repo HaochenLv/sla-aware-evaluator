@@ -1,23 +1,18 @@
 # Project Status
 
 ## Current state
-- Conservative Evaluator remains unchanged; explicit queue overhead is still zero in the current model.
-- HELIX fixed-pipeline Reference stays on draft PR #6. Diagnostic PRs #8/#9/#10 are research-only; do not merge.
-- HELIX is a relative execution reference, not absolute real-system ground truth.
+- Conservative Evaluator remains unchanged; HELIX fixed-pipeline Reference stays draft PR #6 and is a relative execution reference, not ground truth.
+- E23 is a research-only total Decode compute-side excess audit. Network red-line equations are unchanged.
+- Important correction: profiler-only Prefill **compute** debt and HELIX measured Prefill **service** time must not be conflated.
 
 ## Experiment log
-- **E7 / capacity comparison**: Conservative and HELIX both rank Fast > Slow, but Conservative estimates much higher safe request rates under the current strict SLA criterion.
-- **E8 / metric semantics**: HELIX Decode Increment latency matches strong per-token TPOT; aligned TTFT remains Prefill completion rather than true first-token TTFT.
-- **E9 / frontier diagnostic**: the safe→unsafe TPOT cliff is caused by a later Prefill blocking an active Decode; first unsafe points add ~0.67–0.71 s Prefill-attributed GPU queue wait.
-- **E10 / one-Prefill sweep**: 32 controlled cases. Full blocker Prefill compute upper-bounds measured Decode queue in all cases; worst queue/bound ratio ~0.95.
-- **E11 / multi-Prefill additivity**: 12 controlled cases with 2–3 simultaneous Prefills across Slow/Fast. Sum of full profiled Prefill compute times upper-bounds measured Decode queue in all 12 cases. Worst queue/bound ratio is 0.6752 (Fast) and 0.6789 (Slow). However, with 3×512-token Prefills, Decode layer service itself rises from ~0.1121 s isolated to ~0.1563 s. Thus queueing is not the entire compute-side interference under heavier overlap.
+- **E10 / one-Prefill sweep**: 32 controlled Slow/Fast cases. The original E10 artifact reports `interference_to_prefill_service_ratio`, where the denominator is HELIX measured blocker batch service. The old E23 status incorrectly relabeled those ratios as profiler-only Prefill compute debt.
+- **E23 corrected E10 audit**: against the actual HELIX prompt compute profile, compute-only debt fails in 2/32 cases: the 1024-token blocker at relative offset 0.08 on Fast and Slow. Total Decode compute-side excess / profiler-only debt reaches `1.037160` Fast and `1.042621` Slow. Thus the old `44/44` compute-only claim is invalid.
+- **E11 / multi-Prefill total excess**: for the 12 explicit 2–3 Prefill cases, profiler-only summed Prefill compute still upper-bounds `queue wait + positive Decode service inflation` in all 12/12. Worst ratio is `0.678904` (Slow, 512+1024); the 3x512 material-service-inflation ratios remain `0.371766` Slow and `0.354910` Fast.
+- **Combined corrected compute-only result**: 42/44 controlled cases are covered; 2/44 violate the profiler-only debt, with worst ratio `1.042621`.
 
-## Candidate model (not yet adopted)
-A cleaner candidate is a single deterministic **Prefill interference debt** for active Decode:
-`I_D^UB(t) = sum_{p in active Prefill} T_prefill,p^UB`.
-Instead of treating this only as queue time, test whether it upper-bounds the total extra Decode compute-side delay caused by Prefill overlap. Then use
-`Delta_D = tau_D - T_decode,base^UB - I_D^UB(t) - T_fix`
-and leave the existing SLA-to-network red-line formulation unchanged. This is experimentally motivated, not yet mathematically proven.
+## Interpretation
+The simple Prefill-interference abstraction is not disproved yet, but its correct unit cannot be called `full Prefill compute` if the profiling interface omits runtime overhead that also occupies/blockades the HELIX compute-node service path. This correction connects directly to E20/E22: E20 identified CPU-buffer/runtime overhead missing from the Prefill budget, and E22 showed that a generic profiled linear Prefill overhead can recover the isolated HELIX thresholds without hard-coding HELIX constants. The next test should therefore use **Prefill service debt = profiled compute + profiled/bounded runtime overhead**, while keeping network payload/red-line accounting separate.
 
 ## Next
-Validate the interference-debt bound against total Decode excess (queue + service inflation, excluding network where separable) across the one- and multi-Prefill controlled cases. Do not modify Conservative until that bound survives.
+Run a clean offline cross-check on the archived E10/E11 observations using the E22 generic overhead calibration as an external profiling input. Report compute-only versus compute+overhead debt separately. Do not hide the corrected 2/44 compute-only violations, do not fit a discount multiplier, and do not change the production Evaluator yet.
