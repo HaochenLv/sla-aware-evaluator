@@ -1,0 +1,90 @@
+name: HELIX Fixed Reference Parallel Probes
+
+on:
+  pull_request:
+    branches:
+      - feat/helix-fixed-pipeline-reference
+  workflow_dispatch:
+
+jobs:
+  conservative:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Checkout pinned HELIX data
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Conservative 30s capacity
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.conservative_30s_demo > outputs/conservative_30s.json
+          cat outputs/conservative_30s.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conservative-30s
+          path: outputs/conservative_30s.json
+
+  reference-probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pipeline: helix-slow-link-placement
+            label: slow-00625
+            intensity: '0.0625'
+          - pipeline: helix-slow-link-placement
+            label: slow-025
+            intensity: '0.25'
+          - pipeline: helix-slow-link-placement
+            label: slow-050
+            intensity: '0.5'
+          - pipeline: helix-slow-link-placement
+            label: slow-100
+            intensity: '1.0'
+          - pipeline: helix-fast-link-placement
+            label: fast-00625
+            intensity: '0.0625'
+          - pipeline: helix-fast-link-placement
+            label: fast-025
+            intensity: '0.25'
+          - pipeline: helix-fast-link-placement
+            label: fast-050
+            intensity: '0.5'
+          - pipeline: helix-fast-link-placement
+            label: fast-100
+            intensity: '1.0'
+          - pipeline: helix-fast-link-placement
+            label: fast-200
+            intensity: '2.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Run one HELIX Reference point
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+          PROBE_PIPELINE: ${{ matrix.pipeline }}
+          PROBE_INTENSITY: ${{ matrix.intensity }}
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.helix_fixed_probe_demo > outputs/${{ matrix.label }}.json
+          cat outputs/${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.label }}
+          path: outputs/${{ matrix.label }}.json
