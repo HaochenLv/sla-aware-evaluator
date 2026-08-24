@@ -1,0 +1,30 @@
+name: Reference Round Validation
+
+on:
+  push:
+    branches:
+      - feat/reference-evaluator-v1-decode-round
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run full unit/regression suite
+        run: PYTHONPATH=src python -m unittest discover -s tests -v
+      - name: Run official HELIX 30s Reference comparison
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.reference_round_demo > outputs/reference_round_30s.json
+          python -m json.tool outputs/reference_round_30s.json > /dev/null
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-round-validation
+          path: outputs/reference_round_30s.json
