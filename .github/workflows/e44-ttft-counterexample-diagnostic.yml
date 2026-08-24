@@ -1,0 +1,33 @@
+name: E44 TTFT Counterexample Diagnostic
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Diagnose E44 TTFT counterexample
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.e44_ttft_counterexample_diagnostic > outputs/e44-ttft-counterexample-diagnostic.json
+          cat outputs/e44-ttft-counterexample-diagnostic.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e44-ttft-counterexample-diagnostic
+          path: outputs/e44-ttft-counterexample-diagnostic.json
