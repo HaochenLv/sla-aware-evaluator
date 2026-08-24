@@ -40,70 +40,28 @@ class QueueBlockerDiagnostic:
     per_stage: tuple[StageQueueBlockerAttribution, ...]
 
 
-def _operation_events(
-    events: Sequence[ReferenceTraceEvent], operation_seq: int
-) -> tuple[ReferenceTraceEvent, ReferenceTraceEvent, ReferenceTraceEvent]:
-    matches = [event for event in events if event.operation_seq == operation_seq]
-    enqueue = next(
-        (
-            event
-            for event in matches
-            if event.event == "queue_enqueue" and event.resource_kind == "node"
-        ),
-        None,
-    )
-    start = next(
-        (
-            event
-            for event in matches
-            if event.event == "service_start" and event.resource_kind == "node"
-        ),
-        None,
-    )
-    complete = next(
-        (
-            event
-            for event in matches
-            if event.event == "service_complete" and event.resource_kind == "node"
-        ),
-        None,
-    )
-    if enqueue is None or start is None or complete is None:
-        raise RuntimeError("incomplete node operation in Reference trace")
-    return enqueue, start, complete
+def _index_node_events(
+    events: Sequence[ReferenceTraceEvent],
+) -> dict[int, dict[str, ReferenceTraceEvent]]:
+    indexed: dict[int, dict[str, ReferenceTraceEvent]] = {}
+    for event in events:
+        if event.operation_seq is None or event.resource_kind != "node":
+            continue
+        if event.event not in {"queue_enqueue", "service_start", "service_complete"}:
+            continue
+        indexed.setdefault(int(event.operation_seq), {})[event.event] = event
+    return indexed
 
 
 def _node_service_intervals(
-    events: Sequence[ReferenceTraceEvent],
+    indexed: dict[int, dict[str, ReferenceTraceEvent]],
 ) -> tuple[tuple[str, float, float, str], ...]:
-    operation_ids = sorted(
-        {
-            int(event.operation_seq)
-            for event in events
-            if event.operation_seq is not None and event.resource_kind == "node"
-        }
-    )
     # A Decode microbatch emits one event pair per member. Collapse identical
     # node/time/phase intervals so one physical service interval is counted once.
     intervals: set[tuple[str, float, float, str]] = set()
-    for operation_id in operation_ids:
-        matches = [event for event in events if event.operation_seq == operation_id]
-        start = next(
-            (
-                event
-                for event in matches
-                if event.event == "service_start" and event.resource_kind == "node"
-            ),
-            None,
-        )
-        complete = next(
-            (
-                event
-                for event in matches
-                if event.event == "service_complete" and event.resource_kind == "node"
-            ),
-            None,
-        )
+    for op_events in indexed.values():
+        start = op_events.get("service_start")
+        complete = op_events.get("service_complete")
         if start is None or complete is None:
             continue
         intervals.add(
@@ -154,21 +112,19 @@ def diagnose_gpu_queue_blockers(
     if token_index is None:
         raise RuntimeError("could not identify failing Decode token")
 
-    token_events = [
-        event
-        for event in recorder.events
-        if event.request_id == violation.request_id
-        and event.phase == "decode"
-        and event.token_index == token_index
-    ]
-    operation_ids = sorted(
+    token_operation_ids = sorted(
         {
             int(event.operation_seq)
-            for event in token_events
-            if event.operation_seq is not None and event.resource_kind == "node"
+            for event in recorder.events
+            if event.request_id == violation.request_id
+            and event.phase == "decode"
+            and event.token_index == token_index
+            and event.operation_seq is not None
+            and event.resource_kind == "node"
         }
     )
-    service_intervals = _node_service_intervals(recorder.events)
+    indexed = _index_node_events(recorder.events)
+    service_intervals = _node_service_intervals(indexed)
 
     stage_results: list[StageQueueBlockerAttribution] = []
     total_queue = 0.0
@@ -176,8 +132,13 @@ def diagnose_gpu_queue_blockers(
     total_decode = 0.0
     total_idle = 0.0
 
-    for operation_id in operation_ids:
-        enqueue, start, _ = _operation_events(recorder.events, operation_id)
+    for operation_id in token_operation_ids:
+        op_events = indexed.get(operation_id, {})
+        enqueue = op_events.get("queue_enqueue")
+        start = op_events.get("service_start")
+        complete = op_events.get("service_complete")
+        if enqueue is None or start is None or complete is None:
+            raise RuntimeError("incomplete node operation in Reference trace")
         queue_start = enqueue.time_s
         queue_end = start.time_s
         wait = max(queue_end - queue_start, 0.0)
