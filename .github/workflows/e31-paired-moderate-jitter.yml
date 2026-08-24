@@ -1,0 +1,51 @@
+name: E31 Paired Moderate Jitter
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: seed3_slow
+            workload: seed3
+            pipeline: helix-slow-link-placement
+          - label: seed11_fast
+            workload: seed11
+            pipeline: helix-fast-link-placement
+          - label: seed19_slow
+            workload: seed19
+            pipeline: helix-slow-link-placement
+          - label: seed7_offset200_fast
+            workload: seed7_offset200
+            pipeline: helix-fast-link-placement
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Stress unchanged E31 with paired moderate arrival jitter
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+          VALIDATION_LABEL: ${{ matrix.workload }}
+          PIPELINE_ID: ${{ matrix.pipeline }}
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.e31_paired_moderate_jitter > outputs/e31-paired-jitter-${{ matrix.label }}.json
+          cat outputs/e31-paired-jitter-${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e31-paired-jitter-${{ matrix.label }}
+          path: outputs/e31-paired-jitter-${{ matrix.label }}.json
