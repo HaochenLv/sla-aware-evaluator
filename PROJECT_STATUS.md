@@ -2,18 +2,18 @@
 
 ## Current state
 - Conservative Evaluator remains unchanged; HELIX fixed-pipeline Reference remains draft PR #6 and is a relative execution reference, not ground truth.
-- This branch is a historical research-only E24 ablation. It does not change state progression, HELIX scheduling, or the normalized-cost network red-line equation.
-- IMPORTANT: E24 uses the older **compute-only Prefill debt** and is no longer the preferred magnitude candidate after the corrected E23/E26 result.
+- E31 is a research-only successor to historical E24. It preserves the existing Conservative event trajectory and normalized-cost network red-line equation.
+- Candidate under test is **Prefill blocking-service debt**, not obsolete compute-only debt.
 
 ## Experiment log
-- **E15–E16 baseline**: guard-only exact-singleton + full active-Prefill compute debt stayed conservative across tested workload variants, but repeatedly tied Slow/Fast.
-- **E23 correction / E26**: compute-only Prefill debt covers 42/44 controlled E10/E11 cases, not 44/44. The preferred magnitude candidate is now blocking-service debt = profiled compute + independently profiled/bounded blocking overhead, which covers 44/44 archived cases.
-- **E24 setup**: the branch demonstrates the mathematically consistent placement of a Prefill debt inside `Delta_D = tau_D - T_decode - I_prefill - T_queue - T_fix`, so the unchanged network red line sees the reduced Decode time budget. This structural idea remains relevant, but the branch's compute-only `I_prefill` input is obsolete as a final candidate.
-- **E24 execution status**: Actions run `32700730311` failed before any workflow step (`steps=null`, no job log). No E24 frontier/result is claimed.
-- **E25/E28 timing result**: immediate full-debt charging creates an overlap-onset cliff, and archived E10 timing sweeps show actual exposure is stage/execution-phase sensitive rather than monotone in a simple timing offset.
+- **E23 correction / E26**: compute-only Prefill debt covers 42/44 controlled E10/E11 cases; blocking-service debt = profiler compute + independently calibrated E22 blocking overhead covers 44/44. E22 reconstructs independent E10 measured Prefill service within `0.05710%` maximum relative error.
+- **E25/E28–E30**: immediate full-debt charging creates a coarse overlap-onset cliff, but simple global tightening is not supported. Hidden execution phase can consume `95.3143%` of full blocking-service debt, and even the largest archived-compatible constant slack (`32.995 ms`) does not remove any E25 cliff.
+- **E31 setup**: reuse the budget-consistent structural placement from E24 but replace its magnitude with `I_blocking = sum(T_P^compute,profile + h_P * L_in)` using the E22 midpoint `h_P = 59.377209 us/token` on the same validated 8-stage HELIX configuration. Decode budget becomes `Delta_D = tau_D - T_decode - I_blocking - T_queue - T_fix`. Existing Prefill network commitments, event progression, and network red-line formula are unchanged.
+- **E31 guardrail**: the E22 coefficient is experiment-local provenance for this 8-stage configuration. It is not hard-coded as a universal runtime constant; E27 must still validate transfer across stage count before any generic interface claim.
+- **E31 planned outputs**: compute the blocking-service budget frontier for Slow/Fast fixed pipelines on the seed-7 30-s workload, then probe pinned HELIX at the candidate safe edge, unsafe edge, and +5% above unsafe. The older E15 compute-only guard frontier is retained only as historical provenance and is labeled as such.
 
 ## Interpretation
-Two pieces should be kept separate. The **structural placement** of interference inside Decode's remaining SLA budget is still correct for the current modeling logic. The **magnitude input** used by this historical E24 branch is not: compute-only debt misses 2/44 controlled cases. A successor ablation, if run, must use Prefill blocking-service debt and remain opt-in. E28 also warns that replacing full debt with a naive monotone timing heuristic is not justified.
+E31 is the first budget-consistent ablation that combines the currently supported interference magnitude with the original SLA-to-resource logic. If it remains conservative against HELIX, it supports integrating a blocking-service interference term into Decode's remaining time budget without changing the network red line or adding a scheduler. If it is excessively coarse, E28–E30 already indicate that global discounts/slacks are not a defensible fix; the remaining choice is to accept robust screening coarseness or justify one additional cheap state variable.
 
 ## Next
-Do not spend runner time re-validating this obsolete compute-only branch as a candidate. Keep it as provenance for the `Delta_D` integration structure. Any successor should use the E26 blocking-service debt and compare full scheduler-free worst-case exposure against only a separately justified event-level refinement. Do not merge.
+Run E31 when GitHub Actions is available and inspect both the evaluator frontier and HELIX probes. Keep E27 stage-count transfer pending in parallel. Do not merge and do not change default Evaluator semantics before these checks complete.
