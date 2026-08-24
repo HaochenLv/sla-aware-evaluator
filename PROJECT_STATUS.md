@@ -1,16 +1,17 @@
 # Project Status
 
 ## Current state
-- Conservative Evaluator: stabilized; unchanged.
-- Hand-written Reference schedulers: frozen; no longer the validation path.
-- Current branch: `feat/helix-fixed-pipeline-reference`; draft PR #6 is open and must not be merged yet.
-- Reference reuses pinned HELIX public runtime with an externally fixed Layer-Level pipeline; HELIX placement/max-flow optimization is not used.
-- HELIX simulator is a validated execution reference, not ground truth: the paper reports <1% online decode-throughput difference versus its real prototype, but also a systematic ~150 ms latency gap from unmodeled CPU-GPU transfer overhead.
+- Conservative Evaluator remains unchanged on the validated base; HELIX fixed-pipeline Reference remains draft PR #6 and is not ground truth.
+- Diagnostic PRs #8–#12 are research-only; do not merge.
 
 ## Experiment log
-- **E6 / HELIX fixed-pipeline integration**: smoke + unit/regression CI PASS; no new serving simulator/scheduler was implemented.
-- **E7 / 30 s, 17-request capacity**: Conservative Slow = 1.2031 rps safe (1.2211 unsafe); Fast >= 10.3434 rps (right-censored). HELIX Reference Slow capacity is in [0.008663, 0.008792) rps; Fast is in [0.008792, 0.008921) rps. Fast > Slow is resolved pairwise.
-- **E8 / Reference metric semantics**: HELIX represents each Decode token as one `RequestPhase.Increment` request. The next Decode iteration is issued exactly when the previous iteration reaches the sink, so an Increment's source-to-sink latency equals that query's token-to-token interval. Thus the extracted Decode iteration latency is semantically valid for strong per-token TPOT. However, current `aligned_ttft` is Prefill completion, while true TTFT is first Decode completion. HELIX's documented ~150 ms simulator/prototype latency gap also prevents treating absolute 150 ms TPOT capacity as ground truth.
+- **E7**: Conservative and HELIX both rank Fast > Slow, but the original Conservative capacity was far higher.
+- **E9–E11**: HELIX diagnostics confirm real Prefill→Decode queue/interference; full active Prefill compute is a viable conservative interference upper-bound candidate in controlled cases.
+- **E12**: adding that Prefill guard to the unchanged Conservative trace still rejected too late, exposing a more basic profile/runtime mismatch.
+- **E13 / singleton Decode alignment diagnostic**: pinned HELIX runtime doubles interpolated Decode time when a batch contains exactly one Decode token. Our profiler adapter omitted that rule, so the original Conservative used ~0.056 s per Decode token while HELIX isolated service is ~0.112 s. A diagnostic 2× Decode wrapper alone moves both Slow/Fast Conservative frontiers to safe 0.0132 / unsafe 0.0134 intensity (0.008533 / 0.008663 rps), very close to HELIX Slow [0.0134,0.0136) and Fast [0.0136,0.0138). The diagnostic is now slightly more conservative than HELIX. Adding the Prefill guard on top moves the frontier further left to [0.0130,0.0132), so it would over-correct E7 at this stage.
+
+## Revised diagnosis
+The giant E7 discrepancy was primarily caused by an underestimated Decode compute term, not by the missing queue model alone. The network red-line formulation itself is not contradicted: it was being fed an overly optimistic `T_comp,D`, leaving ~89 ms TPOT slack instead of roughly 33 ms before network/fixed costs.
 
 ## Next
-Keep HELIX as a relative execution reference. Before modifying Conservative, separate two questions: (1) use true first-token TTFT for external validation; (2) test ranking/relative-capacity behavior under HELIX rather than interpreting E7 absolute capacity as real-system ground truth. Do not add simulator complexity.
+Test the exact HELIX runtime rule (double only when active Decode batch size is 1; keep n_decode>=2 profile values unchanged) and inspect the first `sla_time` violation near the frontier. Only after that decide whether any Prefill interference guard is still required.
