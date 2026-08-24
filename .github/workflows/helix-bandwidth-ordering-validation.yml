@@ -1,7 +1,6 @@
 name: HELIX Bandwidth Ordering Validation
 
 on:
-  pull_request:
   workflow_dispatch:
 
 jobs:
