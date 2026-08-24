@@ -1,32 +1,10 @@
-name: Exact Singleton Decode Alignment
+name: Exact Singleton Decode CI
 
 on:
-  pull_request:
-    branches:
-      - feat/helix-fixed-pipeline-reference
   workflow_dispatch:
 
 jobs:
-  exact-alignment:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  noop:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Checkout pinned HELIX simulator
-        run: |
-          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
-          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
-      - name: Run exact alignment scan
-        env:
-          HELIX_ROOT: /tmp/Helix-ASPLOS25
-        run: |
-          mkdir -p outputs
-          PYTHONPATH=src python -m sla_aware_mvp.exact_singleton_decode_demo > outputs/exact-singleton-decode.json
-          cat outputs/exact-singleton-decode.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: exact-singleton-decode
-          path: outputs/exact-singleton-decode.json
+      - run: echo "Disabled on disposable E21 PR trigger"
