@@ -10,6 +10,7 @@ jobs:
       fail-fast: false
       matrix:
         offset: [0, 50]
+        bandwidth_gbps: [1.25, 2.5, 5, 10, 20]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -22,15 +23,16 @@ jobs:
         run: |
           git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
           git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
-      - name: Run bandwidth sweep
+      - name: Run one bandwidth capacity shard
         env:
           HELIX_ROOT: /tmp/Helix-ASPLOS25
           VALIDATION_OFFSET: ${{ matrix.offset }}
+          BANDWIDTH_GBPS: ${{ matrix.bandwidth_gbps }}
         run: |
           mkdir -p outputs
-          PYTHONPATH=src python -m sla_aware_mvp.helix_bandwidth_sweep > outputs/bandwidth-sweep-offset-${{ matrix.offset }}.json
-          cat outputs/bandwidth-sweep-offset-${{ matrix.offset }}.json
+          PYTHONPATH=src python -m sla_aware_mvp.helix_bandwidth_single_probe > outputs/offset-${{ matrix.offset }}-bw-${{ matrix.bandwidth_gbps }}.json
+          cat outputs/offset-${{ matrix.offset }}-bw-${{ matrix.bandwidth_gbps }}.json
       - uses: actions/upload-artifact@v4
         with:
-          name: bandwidth-sweep-offset-${{ matrix.offset }}
-          path: outputs/bandwidth-sweep-offset-${{ matrix.offset }}.json
+          name: bandwidth-sweep-offset-${{ matrix.offset }}-bw-${{ matrix.bandwidth_gbps }}
+          path: outputs/offset-${{ matrix.offset }}-bw-${{ matrix.bandwidth_gbps }}.json
