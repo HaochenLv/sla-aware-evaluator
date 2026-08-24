@@ -42,8 +42,18 @@ jobs:
           PYTHONPATH=src python -m sla_aware_mvp.helix_fixed_reference_demo > outputs/helix_fixed_reference_smoke.json
           python -m json.tool outputs/helix_fixed_reference_smoke.json
 
-      - name: Upload smoke result
+      - name: Run 30s Conservative vs HELIX capacity experiment
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+        run: |
+          PYTHONPATH=src python -m sla_aware_mvp.helix_fixed_capacity_demo > outputs/helix_fixed_capacity_30s.json
+          python -m json.tool outputs/helix_fixed_capacity_30s.json
+
+      - name: Upload validation results
         uses: actions/upload-artifact@v4
         with:
-          name: helix-fixed-reference-smoke
-          path: outputs/helix_fixed_reference_smoke.json
+          name: helix-fixed-reference-results
+          path: |
+            outputs/helix_fixed_reference_smoke.json
+            outputs/helix_fixed_capacity_30s.json
