@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feat/helix-fixed-pipeline-reference
+  pull_request:
+    branches:
+      - feat/reference-evaluator-v0
   workflow_dispatch:
 
 jobs:
