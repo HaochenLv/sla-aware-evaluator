@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - exp/helix-queue-overlap-diagnostic
+  pull_request:
+    branches:
+      - feat/helix-fixed-pipeline-reference
   workflow_dispatch:
 
 jobs:
