@@ -14,29 +14,29 @@ jobs:
       matrix:
         include:
           - pipeline: helix-slow-link-placement
-            label: slow-0015625
-            intensity: '0.015625'
+            label: slow-00005
+            intensity: '0.0005'
           - pipeline: helix-slow-link-placement
-            label: slow-00234375
-            intensity: '0.0234375'
+            label: slow-0002
+            intensity: '0.002'
           - pipeline: helix-slow-link-placement
-            label: slow-002734375
-            intensity: '0.02734375'
+            label: slow-0005
+            intensity: '0.005'
           - pipeline: helix-slow-link-placement
-            label: slow-003125
-            intensity: '0.03125'
+            label: slow-001
+            intensity: '0.01'
           - pipeline: helix-fast-link-placement
-            label: fast-0015625
-            intensity: '0.015625'
+            label: fast-00005
+            intensity: '0.0005'
           - pipeline: helix-fast-link-placement
-            label: fast-00234375
-            intensity: '0.0234375'
+            label: fast-0002
+            intensity: '0.002'
           - pipeline: helix-fast-link-placement
-            label: fast-002734375
-            intensity: '0.02734375'
+            label: fast-0005
+            intensity: '0.005'
           - pipeline: helix-fast-link-placement
-            label: fast-003125
-            intensity: '0.03125'
+            label: fast-001
+            intensity: '0.01'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
