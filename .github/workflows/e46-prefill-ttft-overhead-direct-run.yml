@@ -1,0 +1,35 @@
+name: E46 Prefill TTFT Overhead Direct Run
+
+on:
+  push:
+    branches:
+      - exp/e46-prefill-ttft-overhead-direct-run
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install HELIX runtime dependencies
+        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Test E46 candidate on E44 counterexample
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          MPLBACKEND: Agg
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.e46_prefill_ttft_overhead_candidate > outputs/e46-prefill-ttft-overhead-candidate.json
+          cat outputs/e46-prefill-ttft-overhead-candidate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e46-prefill-ttft-overhead-candidate
+          path: outputs/e46-prefill-ttft-overhead-candidate.json
