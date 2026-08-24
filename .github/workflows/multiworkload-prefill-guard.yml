@@ -1,0 +1,47 @@
+name: Multi-Workload Prefill Guard Validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: seed3-offset0
+            seed: 3
+            offset: 0
+          - label: seed11-offset0
+            seed: 11
+            offset: 0
+          - label: seed19-offset0
+            seed: 19
+            offset: 0
+          - label: seed7-offset200
+            seed: 7
+            offset: 200
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Checkout pinned HELIX simulator
+        run: |
+          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
+          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
+      - name: Run workload validation
+        env:
+          HELIX_ROOT: /tmp/Helix-ASPLOS25
+          VALIDATION_SEED: ${{ matrix.seed }}
+          VALIDATION_OFFSET: ${{ matrix.offset }}
+        run: |
+          mkdir -p outputs
+          PYTHONPATH=src python -m sla_aware_mvp.multiworkload_prefill_guard_validation > outputs/${{ matrix.label }}.json
+          cat outputs/${{ matrix.label }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multiworkload-${{ matrix.label }}
+          path: outputs/${{ matrix.label }}.json
