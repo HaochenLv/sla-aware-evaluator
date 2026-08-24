@@ -6,6 +6,14 @@ on:
       - exp/e46-prefill-ttft-overhead-direct-run
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: e46-prefill-ttft-overhead-direct-run
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -29,6 +37,23 @@ jobs:
           mkdir -p outputs
           PYTHONPATH=src python -m sla_aware_mvp.e46_prefill_ttft_overhead_candidate > outputs/e46-prefill-ttft-overhead-candidate.json
           cat outputs/e46-prefill-ttft-overhead-candidate.json
+      - name: Prepare concise PR result
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('outputs/e46-prefill-ttft-overhead-candidate.json').read_text())
+          candidate = data['ttft_overhead_candidate']
+          helix = data['helix']
+          falsification = data['falsification']
+          target = data['target']
+          text = f"""E46 direct-run result\n\n- candidate feasible: `{candidate['feasible']}`\n- candidate first violation: `{candidate['first_violation']}`\n- HELIX feasible: `{helix['feasible']}`\n- HELIX max aligned TTFT: `{helix['max_aligned_ttft_s']}` s\n- HELIX max TPOT: `{helix['max_tpot_s']}` s\n- dangerous optimism: `{falsification['dangerous_optimism']}`\n- counterexample closed: `{falsification['counterexample_closed']}`\n- target intrinsic Prefill overhead: `{target['prefill_intrinsic_overhead_s']}` s\n- ideal network minus remaining TTFT network budget after overhead: `{target['ideal_network_minus_remaining_s']}` s\n\nThis run is research-only; production evaluator and network red-line are unchanged.\n"""
+          Path('outputs/e46-pr-comment.md').write_text(text)
+          PY
+      - name: Post result to draft PR 50
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 50 --repo HaochenLv/sla-aware-evaluator --body-file outputs/e46-pr-comment.md
       - uses: actions/upload-artifact@v4
         with:
           name: e46-prefill-ttft-overhead-candidate
