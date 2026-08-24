@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - exp/helix-prefill-decode-blocking-sweep
+  pull_request:
+    branches:
+      - exp/helix-queue-overlap-diagnostic
   workflow_dispatch:
 
 jobs:
