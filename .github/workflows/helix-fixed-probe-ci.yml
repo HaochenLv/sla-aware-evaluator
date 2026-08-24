@@ -7,29 +7,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  conservative:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Checkout pinned HELIX data
-        run: |
-          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
-          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
-      - name: Conservative 30s capacity
-        env:
-          HELIX_ROOT: /tmp/Helix-ASPLOS25
-        run: |
-          mkdir -p outputs
-          PYTHONPATH=src python -m sla_aware_mvp.conservative_30s_demo > outputs/conservative_30s.json
-          cat outputs/conservative_30s.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: conservative-30s
-          path: outputs/conservative_30s.json
-
   reference-probe:
     runs-on: ubuntu-latest
     strategy:
@@ -37,32 +14,29 @@ jobs:
       matrix:
         include:
           - pipeline: helix-slow-link-placement
-            label: slow-00625
-            intensity: '0.0625'
+            label: slow-0015625
+            intensity: '0.015625'
           - pipeline: helix-slow-link-placement
-            label: slow-025
-            intensity: '0.25'
+            label: slow-00234375
+            intensity: '0.0234375'
           - pipeline: helix-slow-link-placement
-            label: slow-050
-            intensity: '0.5'
+            label: slow-002734375
+            intensity: '0.02734375'
           - pipeline: helix-slow-link-placement
-            label: slow-100
-            intensity: '1.0'
+            label: slow-003125
+            intensity: '0.03125'
           - pipeline: helix-fast-link-placement
-            label: fast-00625
-            intensity: '0.0625'
+            label: fast-0015625
+            intensity: '0.015625'
           - pipeline: helix-fast-link-placement
-            label: fast-025
-            intensity: '0.25'
+            label: fast-00234375
+            intensity: '0.0234375'
           - pipeline: helix-fast-link-placement
-            label: fast-050
-            intensity: '0.5'
+            label: fast-002734375
+            intensity: '0.02734375'
           - pipeline: helix-fast-link-placement
-            label: fast-100
-            intensity: '1.0'
-          - pipeline: helix-fast-link-placement
-            label: fast-200
-            intensity: '2.0'
+            label: fast-003125
+            intensity: '0.03125'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
