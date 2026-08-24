@@ -1,40 +1,10 @@
 name: Evaluator Network Threshold Alignment
 
 on:
-  pull_request:
-    paths:
-      - 'src/sla_aware_mvp/network_redline_threshold_validation.py'
-      - '.github/workflows/evaluator-network-threshold-alignment.yml'
-      - 'PROJECT_STATUS.md'
   workflow_dispatch:
 
 jobs:
-  validate:
-    strategy:
-      fail-fast: false
-      matrix:
-        prompt_tokens: [512, 1024, 1536, 1821]
+  noop:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install HELIX runtime dependencies
-        run: python -m pip install 'networkx~=3.2.1' 'matplotlib~=3.8.2'
-      - name: Checkout pinned HELIX simulator
-        run: |
-          git clone https://github.com/Thesys-lab/Helix-ASPLOS25.git /tmp/Helix-ASPLOS25
-          git -C /tmp/Helix-ASPLOS25 checkout 8639497a4aaf1eb3b7594614cb0bbd376c1342b3
-      - name: Compare evaluator red-line threshold with HELIX
-        env:
-          HELIX_ROOT: /tmp/Helix-ASPLOS25
-          PROMPT_TOKENS: ${{ matrix.prompt_tokens }}
-        run: |
-          mkdir -p outputs
-          PYTHONPATH=src python -m sla_aware_mvp.network_redline_threshold_validation > outputs/prompt-${{ matrix.prompt_tokens }}.json
-          cat outputs/prompt-${{ matrix.prompt_tokens }}.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: network-threshold-prompt-${{ matrix.prompt_tokens }}
-          path: outputs/prompt-${{ matrix.prompt_tokens }}.json
+      - run: echo "Disabled on disposable E21 PR trigger"
