@@ -3,7 +3,7 @@
 ## Current state
 - Conservative Evaluator: stabilized; unchanged.
 - Hand-written Reference schedulers: frozen; no longer the validation path.
-- Current branch: `feat/helix-fixed-pipeline-reference`.
+- Current branch: `feat/helix-fixed-pipeline-reference`; draft PR #6 is open and must not be merged yet.
 - New Reference path: thin adapter around HELIX public simulator with externally fixed Layer-Level pipeline; no HELIX placement/max-flow optimization.
 
 ## Experiment log
