@@ -1,1 +1,2 @@
 Trigger PR-scoped validation for Reference Decode-round. No research-model change.
+Run: GPU queue blocker attribution.
